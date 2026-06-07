@@ -213,7 +213,7 @@ body {
 .m-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; border-bottom: 2px solid var(--line); padding-bottom: 18px; }
 .m-title { font-family: var(--serif); font-size: 28px; line-height: 1.25; }
 .m-author { color: var(--ink-faint); font-size: 14px; margin-top: 5px; }
-.m-logline { font-family: var(--serif); font-size: 16px; color: var(--accent-deep); font-style: italic; margin: 18px 0; line-height: 1.75; }
+.m-logline { font-family: var(--art); font-size: 17px; color: var(--accent-deep); margin: 18px 0; line-height: 1.8; }
 
 .m-story { background: linear-gradient(180deg, #e9f2ee, var(--surface)); border: 1px solid #c4ddd5; border-left: 4px solid var(--story); border-radius: 13px; padding: 15px 18px; margin: 16px 0; }
 .m-story-head { display: flex; align-items: center; gap: 15px; flex-wrap: wrap; margin-bottom: 9px; }
@@ -246,15 +246,16 @@ body {
 .empty { text-align: center; color: var(--ink-faint); padding: 44px; }
 .footer { max-width: 1280px; margin: 0 auto; padding: 22px 32px; display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--ink-faint); }
 
-/* ===== 文艺字体挂载点（把造字工房字体命名为 fonts/display.woff2 或 .ttf 放进去即自动生效）===== */
-@font-face {
-  font-family: "ZaoziArt";
-  src: url("fonts/display.woff2") format("woff2"),
-       url("fonts/display.ttf") format("truetype"),
-       url("fonts/display.otf") format("opentype");
-  font-display: swap;
+/* ===== 造字工房字体（用户授权）：新简黑=标题，骏雅=正文，书研=文艺点缀 ===== */
+@font-face { font-family: "MFXinJianHei"; src: url("fonts/xinjianhei.otf") format("opentype"); font-display: swap; }
+@font-face { font-family: "MFJunYa"; src: url("fonts/junya.otf") format("opentype"); font-display: swap; }
+@font-face { font-family: "MFShuYan"; src: url("fonts/shuyan.otf") format("opentype"); font-display: swap; }
+:root {
+  --serif: "MFXinJianHei", "Songti SC", "Noto Serif SC", Georgia, serif;     /* 标题 */
+  --sans: "MFJunYa", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; /* 正文 */
+  --art: "MFShuYan", "Songti SC", "KaiTi", "STKaiti", serif;                 /* 文艺点缀 */
 }
-:root { --serif: "ZaoziArt", "Songti SC", "Noto Serif SC", "Source Han Serif SC", "STSong", Georgia, serif; }
+/* 书研(--art)用在欢迎页标语、详情页一句话故事等最需要文艺气息处（见各自规则） */
 
 /* ===== v5：多屏 / 欢迎 / 注册 / 引导 / 小助手 ===== */
 .screen[hidden] { display: none !important; }
@@ -265,7 +266,7 @@ body {
 .welcome-inner { max-width: 560px; text-align: center; }
 .welcome-logo { width: 88px; height: 88px; margin: 0 auto 12px; color: var(--accent); }
 .welcome-title { font-family: var(--serif); font-size: 54px; letter-spacing: 5px; color: var(--ink); }
-.welcome-tag { font-family: var(--serif); font-size: 18px; color: var(--accent-deep); margin-top: 6px; letter-spacing: 2px; }
+.welcome-tag { font-family: var(--art); font-size: 19px; color: var(--accent-deep); margin-top: 8px; letter-spacing: 2px; }
 .welcome-desc { font-size: 15px; color: var(--ink-soft); line-height: 1.95; margin: 22px auto 0; max-width: 480px; }
 .welcome-desc b { color: var(--accent-deep); }
 .welcome-feats { display: flex; gap: 12px; justify-content: center; margin: 28px 0 32px; flex-wrap: wrap; }

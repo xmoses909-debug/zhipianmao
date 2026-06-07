@@ -317,14 +317,37 @@ body {
 .assistant-bubble { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; border-top-left-radius: 4px; padding: 11px 16px; font-size: 13.5px; color: var(--ink-soft); box-shadow: var(--shadow-sm); line-height: 1.6; }
 .assistant-bubble b { color: var(--accent-deep); }
 
-/* AI 实时选片 */
-.discover-bar { display: flex; align-items: center; gap: 14px; margin: 18px 0 2px; flex-wrap: wrap; }
-.ai-discover { font-family: var(--serif); font-size: 14px; color: #fff; background: linear-gradient(150deg, var(--story), #245a50); border: none; border-radius: 999px; padding: 11px 22px; cursor: pointer; box-shadow: var(--shadow-sm); transition: filter .15s, transform .12s; }
-.ai-discover:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); }
-.ai-discover:disabled { opacity: .7; cursor: wait; }
-.discover-status { font-size: 12.5px; color: var(--ink-faint); }
+/* 制片帽 · 为我选片（在偏好面板内，竖向布局，作为偏好的"出击"按钮） */
+.discover-bar { display: flex; flex-direction: column; gap: 10px; margin: 2px 0 12px; }
+.ai-discover {
+  width: 100%; font-family: var(--serif); font-size: 15px; color: #fff; letter-spacing: 1px;
+  background: linear-gradient(150deg, var(--accent), var(--accent-deep)); border: none; border-radius: 12px;
+  padding: 13px 18px; cursor: pointer; box-shadow: var(--shadow); transition: filter .15s, transform .12s;
+}
+.ai-discover:hover:not(:disabled) { filter: brightness(1.07); transform: translateY(-1px); }
+.ai-discover:disabled { opacity: .9; cursor: wait; }
+.discover-status { font-size: 12px; color: var(--ink-faint); line-height: 1.55; }
 .discover-status.ok { color: var(--story); font-weight: 600; }
 .discover-status.err { color: var(--accent); }
+
+/* 进度条：随时间走，分阶段文案，让 ~100 秒等待不焦虑 */
+.discover-prog { display: flex; flex-direction: column; gap: 6px; }
+.discover-prog-track { height: 9px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+.discover-prog-track i { display: block; height: 100%; width: 0; border-radius: 999px; background: linear-gradient(90deg, var(--match), var(--accent)); transition: width .5s ease; }
+.discover-prog-label { font-size: 11.5px; color: var(--accent-deep); font-weight: 600; letter-spacing: .2px; }
+
+/* 选片加载浮层：点"进入制片帽"/"重新选片"后，全屏进度条，走完再露出结果页 */
+.loading-overlay { position: fixed; inset: 0; background: rgba(40,34,28,.55); display: grid; place-items: center; z-index: 60; padding: 24px; backdrop-filter: blur(4px); }
+.loading-overlay[hidden] { display: none; }
+.loading-card { background: var(--surface); border: 1px solid var(--line); border-radius: 22px; box-shadow: var(--shadow-lg); padding: 38px 34px; width: 100%; max-width: 440px; text-align: center; }
+.loading-logo { width: 60px; height: 60px; margin: 0 auto 14px; color: var(--accent); animation: hatPulse 1.6s ease-in-out infinite; }
+.loading-logo svg { width: 100%; height: 100%; }
+@keyframes hatPulse { 0%, 100% { transform: translateY(0); opacity: 1; } 50% { transform: translateY(-6px); opacity: .65; } }
+.loading-title { font-family: var(--serif); font-size: 22px; margin-bottom: 22px; color: var(--ink); letter-spacing: 1px; }
+.loading-prog { display: flex; flex-direction: column; gap: 9px; }
+.loading-prog .discover-prog-track { height: 11px; }
+.loading-prog .discover-prog-label { font-size: 13px; }
+.loading-tip { font-size: 12px; color: var(--ink-faint); margin-top: 18px; line-height: 1.7; }
 
 @media (max-width: 880px) {
   .layout { grid-template-columns: 1fr; }

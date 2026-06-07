@@ -14,7 +14,7 @@
   var SCALE_OPTS = ["剧集", "电影", "短剧"];
   var DEFAULT_PROFILE = {
     likes: ["古装", "美食", "治愈", "音乐", "热血", "运动", "日系文艺", "人文"],
-    dislikes: ["民国"], sources: ["豆瓣阅读", "晋江"], scale: ["剧集", "电影"], status: "优先已完结", customWants: ""
+    dislikes: [], sources: ["豆瓣阅读", "晋江"], scale: ["剧集", "电影"], status: "优先已完结", customWants: ""
   };
 
   /* 存储 */
@@ -33,7 +33,7 @@
   /* 工具 */
   function el(id) { return document.getElementById(id); }
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
-  function allBooks() { return DATA.picks.concat(DATA.candidates); }
+  function allBooks() { return (livePicks || []).concat(DATA.picks).concat(DATA.candidates); }
   function headlineScore(b) { return (b.aiScore != null) ? b.aiScore : b.matchScore; }
   function sourceShort(b) {
     if (!b.source) return "—";
@@ -56,20 +56,20 @@
   }
 
   /* ---------- 偏好控件（参数化，欢迎引导与侧栏共用） ---------- */
-  function genreState(g) { return state.profile.likes.indexOf(g) > -1 ? "like" : (state.profile.dislikes.indexOf(g) > -1 ? "dislike" : ""); }
+  function genreState(g) { return state.profile.likes.indexOf(g) > -1 ? "like" : ""; }
   function renderGenrePalette(id) {
     var box = el(id); if (!box) return;
     box.innerHTML = PALETTE.map(function (g) {
       var st = genreState(g);
-      return '<span class="chip pref ' + st + '" data-g="' + g + '">' + (st === "dislike" ? "✕ " : st === "like" ? "✓ " : "") + g + "</span>";
+      return '<span class="chip pref ' + st + '" data-g="' + g + '">' + (st === "like" ? "✓ " : "") + g + "</span>";
     }).join("");
     [].forEach.call(box.querySelectorAll(".chip"), function (c) { c.onclick = function () { cycleGenre(c.getAttribute("data-g")); }; });
   }
   function cycleGenre(g) {
-    var li = state.profile.likes.indexOf(g), di = state.profile.dislikes.indexOf(g);
-    if (li === -1 && di === -1) state.profile.likes.push(g);
-    else if (li > -1) { state.profile.likes.splice(li, 1); state.profile.dislikes.push(g); }
-    else state.profile.dislikes.splice(di, 1);
+    // 两态：未选 → 选中；再点 → 取消。（不再有"不感冒打叉"那一态）
+    var li = state.profile.likes.indexOf(g);
+    if (li > -1) state.profile.likes.splice(li, 1);
+    else state.profile.likes.push(g);
     onProfileChange();
   }
   function renderToggle(id, opts, arr) {
@@ -139,16 +139,52 @@
     renderAgentNote();
   }
   function renderAgentNote() {
-    if (livePicks && liveNote) el("agentNoteText").innerHTML = "🤖 <b>DeepSeek 实时选片</b>：" + esc(liveNote);
+    if (livePicks && liveNote) el("agentNoteText").innerHTML = "🎩 <b>制片帽为您精选</b>：" + esc(liveNote);
     else el("agentNoteText").innerHTML = mdBold(DATA.agentNote);
   }
 
-  /* ---------- AI 实时选片（前端 → 本地后端 → DeepSeek）---------- */
+  /* ---------- 制片帽 · 为我选片（前端 → 本地后端 → 出片）---------- */
   var livePicks = null, liveNote = "";
+  var progTimer = null;
+  /* 选片约 100 秒，给个会走的进度条 + 分阶段文案，别让用户干等心里没底。
+     后端是一次阻塞请求、拿不到真实百分比，故用"渐近曲线"模拟：随时间逼近 95%，
+     真结果回来再补到 100%。文案对应后台真实阶段：搜罗→通读→判断→撰写。 */
+  var PROG_STAGES = [
+    [0, "📡 正在各大网站搜罗新书…"],
+    [16, "📖 逐本通读故事文案…"],
+    [40, "⚖️ 按好故事标准判断故事力…"],
+    [66, "🎯 对照你的需求精挑细选…"],
+    [85, "✍️ 撰写改编分析，即将完成…"]
+  ];
+  function startProgress() {
+    var ov = el("loadingOverlay"), fill = el("loadProgFill"), lab = el("loadProgLabel");
+    if (!ov) return;
+    ov.hidden = false; fill.style.width = "0%";
+    var t0 = Date.now();
+    function tick() {
+      var t = (Date.now() - t0) / 1000;
+      var pct = Math.min(95, Math.round((1 - Math.exp(-t / 40)) * 100));
+      fill.style.width = pct + "%";
+      var label = PROG_STAGES[0][1];
+      for (var i = 0; i < PROG_STAGES.length; i++) { if (pct >= PROG_STAGES[i][0]) label = PROG_STAGES[i][1]; }
+      lab.textContent = label + "  " + pct + "%";
+    }
+    tick(); progTimer = setInterval(tick, 500);
+  }
+  function endProgress(ok) {
+    if (progTimer) { clearInterval(progTimer); progTimer = null; }
+    var ov = el("loadingOverlay"), fill = el("loadProgFill"), lab = el("loadProgLabel");
+    if (!ov) return;
+    fill.style.width = "100%";
+    lab.textContent = ok ? "✓ 选好了，正在为您呈现…" : "未能完成";
+    setTimeout(function () { if (el("loadingOverlay")) el("loadingOverlay").hidden = true; }, ok ? 700 : 1800);
+  }
   function discover() {
-    var btn = el("aiDiscover"), status = el("discoverStatus"), old = btn.textContent;
-    btn.disabled = true; btn.textContent = "🔍 正在让 DeepSeek 思考…";
+    var btn = el("aiDiscover"), status = el("discoverStatus");
+    if (!btn.getAttribute("data-label")) btn.setAttribute("data-label", btn.textContent);
+    btn.disabled = true; btn.textContent = "制片帽正在为您选片…";
     status.textContent = ""; status.className = "discover-status";
+    startProgress();
     fetch("/api/discover", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ profile: state.profile, count: 3 })
@@ -157,18 +193,21 @@
         if (j && j.ok && j.picks && j.picks.length) {
           livePicks = j.picks; liveNote = j.note || "";
           renderAgentNote(); renderLists();
-          status.textContent = "✓ DeepSeek 为你挑了 " + j.picks.length + " 部（" + (j.model || "") + "）";
+          endProgress(true);
+          status.textContent = "✓ 制片帽为您选了 " + j.picks.length + " 部，已更新到「本周精选」。";
           status.className = "discover-status ok";
         } else {
-          status.textContent = "✗ " + ((j && j.error) || "没返回结果");
+          endProgress(false);
+          status.textContent = "✗ " + ((j && j.error) || "这次没挑到合适的，调调偏好再试。");
           status.className = "discover-status err";
         }
       })
       .catch(function () {
-        status.textContent = "✗ 连不上本地 AI 后端——请用「启动-AI.command」启动，并确认 backend/.env 填了 key。";
+        endProgress(false);
+        status.textContent = "✗ 没连上本地服务——请先双击「启动-AI.command」启动后再试。";
         status.className = "discover-status err";
       })
-      .then(function () { btn.disabled = false; btn.textContent = old; });
+      .then(function () { btn.disabled = false; btn.textContent = btn.getAttribute("data-label"); });
   }
   var filters = { genre: "", source: "", status: "", q: "", favOnly: false };
   function renderChipFilter(id, values, key) {
@@ -219,7 +258,7 @@
     var cands = DATA.candidates.filter(matchFilter).sort(function (a, b) { return sk(b) - sk(a); });
     el("weeklyCards").innerHTML = weekly.map(bookCard).join("");
     el("candidateCards").innerHTML = cands.map(bookCard).join("");
-    el("weeklyCount").textContent = "（" + weekly.length + (livePicks ? " · AI 实时" : "") + "）";
+    el("weeklyCount").textContent = "（" + weekly.length + (livePicks ? " · 实时精选" : "") + "）";
     el("emptyState").hidden = (weekly.length + cands.length) > 0;
     bindCards();
   }
@@ -260,7 +299,7 @@
       + '<div class="m-section"><h4>故事梗概</h4><p>' + (b.synopsis || "") + "</p></div>" + chars
       + section("改编亮点", listHTML(b.highlights)) + section("改编难点 / 风险", listHTML(b.challenges))
       + section("对标作品", '<div class="m-bench">' + (b.benchmarks || []).map(function (x) { return '<span class="tag">' + x + "</span>"; }).join("") + "</div>")
-      + section("为什么是现在", "<p>" + (b.whyNow || "") + "</p>") + section("版权状态线索", "<p>" + (b.rightsClue || "") + "</p>") + section("智能体总评", "<p>" + (b.verdict || "") + "</p>") + dn
+      + section("为什么是现在", "<p>" + (b.whyNow || "") + "</p>") + section("版权状态线索", "<p>" + (b.rightsClue || "") + "</p>") + section("制片帽总评", "<p>" + (b.verdict || "") + "</p>") + dn
       + '<a class="' + (b.linkVerified ? "m-link" : "m-link unverified") + '" href="' + b.url + '" target="_blank" rel="noopener">' + (b.linkVerified ? "前往原文 →" : "在平台搜索此书 →") + "</a>"
       + '<div class="m-actions"><button class="act act-fav' + (state.fav[b.id] ? " on-fav" : "") + '" data-act="fav" data-id="' + b.id + '">' + (state.fav[b.id] ? "★ 已收藏" : "☆ 收藏") + "</button>"
       + '<button class="act act-up' + (state.feedback[b.id] === "up" ? " on-up" : "") + '" data-act="up" data-id="' + b.id + '">👍 想做</button>'
@@ -288,7 +327,7 @@
       showScreen("s-onboard"); renderPrefs("-ob");
       var sob = el("statusPick-ob"); if (sob) sob.onchange = function () { state.profile.status = sob.value; onProfileChange(); };
     };
-    el("toMain").onclick = function () { enterMain(); };
+    el("toMain").onclick = function () { enterMain(); discover(); };
 
     // 主页侧栏：状态下拉、重置、筛选、弹窗
     el("statusPick").onchange = function () { state.profile.status = el("statusPick").value; onProfileChange(); };

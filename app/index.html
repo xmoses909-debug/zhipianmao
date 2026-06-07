@@ -57,7 +57,7 @@
       <div class="principle" id="principle-ob"></div>
 
       <div class="pref-block">
-        <span class="taste-label">喜欢的题材 <em>点一下=喜欢 · 再点=不感冒 · 再点=取消</em></span>
+        <span class="taste-label">喜欢的题材 <em>点一下=选中 · 再点=取消</em></span>
         <div class="chips chips-pref" id="genrePalette-ob"></div>
       </div>
       <div class="pref-block">
@@ -110,7 +110,7 @@
           <h3>选题偏好 <button class="reset-pref" id="resetPref" title="恢复默认">重置</button></h3>
           <div class="principle" id="principle"></div>
           <div class="pref-block">
-            <span class="taste-label">喜欢的题材 <em>点一下=喜欢 · 再点=不感冒</em></span>
+            <span class="taste-label">喜欢的题材 <em>点一下=选中 · 再点=取消</em></span>
             <div class="chips chips-pref" id="genrePalette"></div>
           </div>
           <div class="pref-block">
@@ -130,6 +130,10 @@
             <textarea id="customWants" class="custom-input" placeholder="例如：想找适合改电影的冷门中短篇，调性偏冷峻克制…"></textarea>
           </div>
           <div class="profile-summary" id="profileSummary"></div>
+          <div class="discover-bar">
+            <button class="ai-discover" id="aiDiscover">🎬 重新为我选片</button>
+            <span class="discover-status" id="discoverStatus"></span>
+          </div>
           <p class="learn-note" id="learnNote">反馈学习：尚无反馈</p>
         </section>
 
@@ -154,13 +158,8 @@
           <div class="source-pill" id="sourcePill"></div>
         </div>
 
-        <div class="discover-bar">
-          <button class="ai-discover" id="aiDiscover">🔍 让 AI 按我的口味实时选片</button>
-          <span class="discover-status" id="discoverStatus"></span>
-        </div>
-
         <div class="agent-note" id="agentNote">
-          <div class="agent-note-head"><span class="agent-badge">智能体 · 本周说明</span></div>
+          <div class="agent-note-head"><span class="agent-badge">制片帽 · 本周说明</span></div>
           <p id="agentNoteText"></p>
         </div>
 
@@ -176,9 +175,22 @@
 
     <footer class="footer">
       <span>制片帽 · 选题雷达 测试版 v0.5</span>
-      <span>数据来源：豆瓣阅读 / 晋江 公开页面（书名/链接/字数/梗概为真实信息，改编分析为智能体判断）</span>
+      <span>数据来源：豆瓣阅读 / 晋江 公开页面（书名/链接/字数/梗概为真实信息，改编分析为制片帽判断）</span>
     </footer>
   </section>
+
+  <!-- 选片加载浮层（进度条） -->
+  <div class="loading-overlay" id="loadingOverlay" hidden>
+    <div class="loading-card">
+      <div class="loading-logo brand-hat"></div>
+      <h3 class="loading-title">制片帽正在为您选片</h3>
+      <div class="loading-prog">
+        <div class="discover-prog-track"><i id="loadProgFill"></i></div>
+        <div class="discover-prog-label" id="loadProgLabel"></div>
+      </div>
+      <p class="loading-tip">正在各大文学网站搜罗新书、通读文案、按"好故事"标准判断，约需 1–2 分钟，请稍候…</p>
+    </div>
+  </div>
 
   <!-- 详情弹窗 -->
   <div class="modal-overlay" id="modal" hidden>

@@ -1,0 +1,17 @@
+{
+  "name": "帽制片 · 选题雷达",
+  "short_name": "选题雷达",
+  "description": "面向制片人的选题雷达：每周发现有改编潜力的早期小说。",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f2ebdd",
+  "theme_color": "#b0492e",
+  "lang": "zh-CN",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

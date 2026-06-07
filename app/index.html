@@ -3,121 +3,169 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>帽制片 · 选题雷达</title>
+  <title>制片帽 · 选题雷达</title>
   <meta name="theme-color" content="#b0492e" />
   <link rel="manifest" href="manifest.json" />
   <link rel="apple-touch-icon" href="icon-192.png" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-  <meta name="apple-mobile-web-app-title" content="选题雷达" />
+  <meta name="apple-mobile-web-app-title" content="制片帽" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <!-- 顶栏 -->
-  <header class="topbar">
-    <div class="brand">
-      <span class="brand-mark">帽</span>
-      <div class="brand-text">
-        <strong>帽制片</strong>
-        <span>制片效率工作台</span>
-      </div>
-    </div>
-    <nav class="modules">
-      <button class="module active" data-module="策划">策划 · 选题雷达</button>
-      <button class="module disabled" title="即将上线">制作 · 剧本拆解 <em>即将上线</em></button>
-      <button class="module disabled" title="即将上线">发行 <em>即将上线</em></button>
-    </nav>
-  </header>
 
-  <main class="layout">
-    <!-- 左侧：口味画像 + 筛选 -->
-    <aside class="sidebar">
-      <section class="card taste-card">
-        <h3>选题偏好 <button class="reset-pref" id="resetPref" title="恢复默认">重置</button></h3>
-        <div class="principle" id="principle"></div>
-        <div class="pref-block">
-          <span class="taste-label">喜欢的题材 <em>点一下=喜欢 · 再点=不感冒 · 再点=取消</em></span>
-          <div class="chips chips-pref" id="genrePalette"></div>
-        </div>
+  <!-- ① 欢迎页 -->
+  <section class="screen welcome" id="s-welcome">
+    <div class="welcome-inner">
+      <div class="welcome-logo logo-slot"></div>
+      <h1 class="welcome-title">制片帽</h1>
+      <p class="welcome-tag">制片人的选题雷达</p>
+      <p class="welcome-desc">
+        每周从晋江、豆瓣阅读等各大文学网站，<b>在大买家之前</b>，
+        帮影视从业者发现还没卖、又有改编潜力的好故事。
+      </p>
+      <div class="welcome-feats">
+        <div class="feat"><span>🔭</span><b>选品前置</b><i>抢在头部公司之前</i></div>
+        <div class="feat"><span>📖</span><b>好故事优先</b><i>文学判断为先，题材其次</i></div>
+        <div class="feat"><span>🎬</span><b>改编报告</b><i>亮点·难点·对标·过审</i></div>
+      </div>
+      <button class="btn-primary" id="toRegister">开始使用 →</button>
+      <p class="welcome-foot">测试版 · 面向影视行业从业者</p>
+    </div>
+  </section>
+
+  <!-- ② 注册页 -->
+  <section class="screen auth" id="s-register" hidden>
+    <div class="auth-card">
+      <div class="auth-logo logo-slot"></div>
+      <h2>创建你的账号</h2>
+      <p class="auth-sub">几秒钟，建一个属于你的选题雷达</p>
+      <label class="field"><span>用户名</span><input id="regUser" type="text" placeholder="给自己起个名字" autocomplete="username" /></label>
+      <label class="field"><span>密码</span><input id="regPass" type="password" placeholder="设置一个密码" autocomplete="new-password" /></label>
+      <p class="auth-err" id="regErr" hidden></p>
+      <button class="btn-primary" id="toOnboard">注册并继续 →</button>
+      <p class="auth-note">⚠ 演示版：账号暂存在本机浏览器，<b>不是真账号</b>（不会上传、也无法多设备登录）。上线接后端后才会变成真正的账号系统。</p>
+    </div>
+  </section>
+
+  <!-- ③ 选偏好页 -->
+  <section class="screen onboard" id="s-onboard" hidden>
+    <div class="onboard-card">
+      <h2>告诉我们你的口味</h2>
+      <p class="onboard-sub">挑一挑，我们好知道每周该给你找什么。随时能改。</p>
+
+      <div class="principle" id="principle-ob"></div>
+
+      <div class="pref-block">
+        <span class="taste-label">喜欢的题材 <em>点一下=喜欢 · 再点=不感冒 · 再点=取消</em></span>
+        <div class="chips chips-pref" id="genrePalette-ob"></div>
+      </div>
+      <div class="pref-block">
+        <span class="taste-label">偏好的来源网站</span>
+        <div class="chips chips-toggle" id="sourcePick-ob"></div>
+      </div>
+      <div class="pref-row">
         <div class="pref-block">
           <span class="taste-label">体量</span>
-          <div class="chips chips-toggle" id="scalePick"></div>
+          <div class="chips chips-toggle" id="scalePick-ob"></div>
         </div>
         <div class="pref-block">
           <span class="taste-label">完结状态</span>
-          <select id="statusPick">
-            <option value="优先已完结">优先已完结</option>
-            <option value="连载中优先">连载中优先</option>
-            <option value="不限">不限</option>
-          </select>
+          <select id="statusPick-ob"><option>优先已完结</option><option>连载中优先</option><option>不限</option></select>
         </div>
-        <div class="profile-summary" id="profileSummary"></div>
-        <p class="learn-note" id="learnNote">反馈学习：尚无反馈</p>
-        <p class="multi-note">每位制片人可自定义此偏好；正式版多用户。测试版选品仍按默认口味产出。</p>
+      </div>
+      <div class="profile-summary" id="profileSummary-ob"></div>
+      <button class="btn-primary" id="toMain">进入制片帽 →</button>
+    </div>
+  </section>
+
+  <!-- ④ 主页 -->
+  <section class="screen app" id="s-main" hidden>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark brand-hat"></span>
+        <div class="brand-text"><strong>制片帽</strong><span>选题雷达</span></div>
+      </div>
+      <nav class="modules">
+        <button class="module active" data-module="策划">策划 · 选题雷达</button>
+        <button class="module disabled" title="即将上线">制作 · 剧本拆解 <em>即将上线</em></button>
+        <button class="module disabled" title="即将上线">发行 <em>即将上线</em></button>
+      </nav>
+      <div class="account" id="account"></div>
+    </header>
+
+    <!-- AI 小助手 -->
+    <div class="assistant" id="assistant">
+      <span class="assistant-ava brand-hat"></span>
+      <div class="assistant-bubble" id="assistantText"></div>
+    </div>
+
+    <main class="layout">
+      <aside class="sidebar">
+        <section class="card taste-card">
+          <h3>选题偏好 <button class="reset-pref" id="resetPref" title="恢复默认">重置</button></h3>
+          <div class="principle" id="principle"></div>
+          <div class="pref-block">
+            <span class="taste-label">喜欢的题材 <em>点一下=喜欢 · 再点=不感冒</em></span>
+            <div class="chips chips-pref" id="genrePalette"></div>
+          </div>
+          <div class="pref-block">
+            <span class="taste-label">来源网站</span>
+            <div class="chips chips-toggle" id="sourcePick"></div>
+          </div>
+          <div class="pref-block">
+            <span class="taste-label">体量</span>
+            <div class="chips chips-toggle" id="scalePick"></div>
+          </div>
+          <div class="pref-block">
+            <span class="taste-label">完结状态</span>
+            <select id="statusPick"><option>优先已完结</option><option>连载中优先</option><option>不限</option></select>
+          </div>
+          <div class="profile-summary" id="profileSummary"></div>
+          <p class="learn-note" id="learnNote">反馈学习：尚无反馈</p>
+        </section>
+
+        <section class="card filter-card">
+          <h3>筛选</h3>
+          <input type="search" id="searchBox" placeholder="搜索书名 / 作者…" />
+          <div class="filter-row"><label>题材</label><div class="chips chips-filter" id="genreFilter"></div></div>
+          <div class="filter-row"><label>来源</label><div class="chips chips-filter" id="sourceFilter"></div></div>
+          <div class="filter-row"><label>状态</label>
+            <select id="statusFilter"><option value="">全部</option><option value="已完结">已完结</option><option value="连载中">连载中</option></select>
+          </div>
+          <label class="checkbox-row"><input type="checkbox" id="favOnly" /> 只看我收藏的</label>
+        </section>
+      </aside>
+
+      <section class="content">
+        <div class="content-head">
+          <div>
+            <h1>选题雷达</h1>
+            <p class="subtitle">在大买家之前，发现还没卖、又有改编潜力的早期作品 · <span id="weekLabel"></span></p>
+          </div>
+          <div class="source-pill" id="sourcePill"></div>
+        </div>
+
+        <div class="agent-note" id="agentNote">
+          <div class="agent-note-head"><span class="agent-badge">智能体 · 本周说明</span></div>
+          <p id="agentNoteText"></p>
+        </div>
+
+        <div class="section-head"><h2>本周精选 <span class="count" id="weeklyCount"></span></h2></div>
+        <div class="cards" id="weeklyCards"></div>
+
+        <div class="section-head"><h2>备选库 / 往期</h2><span class="hint">真实作品；标 ✓ 者链接已核实</span></div>
+        <div class="cards" id="candidateCards"></div>
+
+        <p class="empty" id="emptyState" hidden>没有符合筛选条件的作品。</p>
       </section>
+    </main>
 
-      <section class="card filter-card">
-        <h3>筛选</h3>
-        <input type="search" id="searchBox" placeholder="搜索书名 / 作者…" />
-        <div class="filter-row">
-          <label>题材</label>
-          <div class="chips chips-filter" id="genreFilter"></div>
-        </div>
-        <div class="filter-row">
-          <label>来源</label>
-          <div class="chips chips-filter" id="sourceFilter"></div>
-        </div>
-        <div class="filter-row">
-          <label>状态</label>
-          <select id="statusFilter">
-            <option value="">全部</option>
-            <option value="已完结">已完结</option>
-            <option value="连载中">连载中</option>
-          </select>
-        </div>
-        <label class="checkbox-row">
-          <input type="checkbox" id="favOnly" /> 只看我收藏的
-        </label>
-      </section>
-    </aside>
-
-    <!-- 右侧：内容 -->
-    <section class="content">
-      <div class="content-head">
-        <div>
-          <h1>选题雷达</h1>
-          <p class="subtitle">
-            在大买家之前，发现还没卖、又有改编潜力的早期作品 ·
-            <span id="weekLabel"></span>
-          </p>
-        </div>
-        <div class="source-pill" id="sourcePill"></div>
-      </div>
-
-      <!-- 本周说明 -->
-      <div class="agent-note" id="agentNote">
-        <div class="agent-note-head">
-          <span class="agent-badge">智能体 · 本周说明</span>
-        </div>
-        <p id="agentNoteText"></p>
-      </div>
-
-      <!-- 本周精选 -->
-      <div class="section-head">
-        <h2>本周精选 <span class="count" id="weeklyCount"></span></h2>
-      </div>
-      <div class="cards" id="weeklyCards"></div>
-
-      <!-- 备选库 -->
-      <div class="section-head">
-        <h2>备选库 / 往期</h2>
-        <span class="hint">真实作品；标 ✓ 者链接已核实</span>
-      </div>
-      <div class="cards" id="candidateCards"></div>
-
-      <p class="empty" id="emptyState" hidden>没有符合筛选条件的作品。</p>
-    </section>
-  </main>
+    <footer class="footer">
+      <span>制片帽 · 选题雷达 测试版 v0.5</span>
+      <span>数据来源：豆瓣阅读 / 晋江 公开页面（书名/链接/字数/梗概为真实信息，改编分析为智能体判断）</span>
+    </footer>
+  </section>
 
   <!-- 详情弹窗 -->
   <div class="modal-overlay" id="modal" hidden>
@@ -127,16 +175,13 @@
     </div>
   </div>
 
-  <footer class="footer">
-    <span>帽制片 · 选题雷达 测试版 v0.1</span>
-    <span>数据来源：豆瓣阅读公开页面（书名/链接/字数/梗概为真实信息，改编分析为智能体判断）</span>
-  </footer>
-
   <script src="data/recommendations.js"></script>
   <script src="app.js"></script>
   <script>
+    /* 测试阶段暂停 Service Worker（避免旧缓存干扰）；部署到 Pages 时再启用稳健版。同时清理可能残留的旧 SW/缓存。 */
     if ("serviceWorker" in navigator) {
-      window.addEventListener("load", function () { navigator.serviceWorker.register("sw.js").catch(function () {}); });
+      navigator.serviceWorker.getRegistrations().then(function (rs) { rs.forEach(function (r) { r.unregister(); }); });
+      if (window.caches) caches.keys().then(function (ks) { ks.forEach(function (k) { caches.delete(k); }); });
     }
   </script>
 </body>

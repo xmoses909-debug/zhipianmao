@@ -17,6 +17,11 @@ def load_key():
     k = os.environ.get("DEEPSEEK_API_KEY", "").strip()
     if k:
         return k
+    txt = os.path.join(ROOT, "key.txt")  # 给非技术用户的简单方式：可见文件，直接粘 key
+    if os.path.exists(txt):
+        val = open(txt, encoding="utf-8").read().strip()
+        if val and "粘贴" not in val:
+            return val
     envp = os.path.join(ROOT, ".env")
     if os.path.exists(envp):
         for line in open(envp, encoding="utf-8"):

@@ -4,8 +4,8 @@
 
 ## 怎么跑
 
-1. **填 key**：打开 `backend/.env`，把 `DEEPSEEK_API_KEY=` 后面换成你的 DeepSeek key，保存。
-   （这个文件已被 git 忽略，不会上传、不进聊天。）
+1. **填 key**（最简单）：打开 `backend/key.txt`，把里面那行字**整行替换**成你的 DeepSeek key，保存。
+   （`key.txt` 和 `.env` 都已被 git 忽略，不会上传、不进聊天。）
 2. **启动**：双击项目根目录的 **`启动-AI.command`**，浏览器会打开 `http://localhost:4173/`。
 3. 在主页点 **「🔍 让 AI 按我的口味实时选片」**，或在自定义需求框里写完需求再点——后端就会真的调 DeepSeek 给你挑。
 

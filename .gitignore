@@ -3,3 +3,4 @@
 node_modules/
 .claude/
 backend/.env
+backend/key.txt

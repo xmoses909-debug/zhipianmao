@@ -251,7 +251,7 @@ body {
 @font-face { font-family: "MFJunYa"; src: url("fonts/junya.otf") format("opentype"); font-display: swap; }
 @font-face { font-family: "MFShuYan"; src: url("fonts/shuyan.otf") format("opentype"); font-display: swap; }
 :root {
-  --serif: "MFXinJianHei", "Songti SC", "Noto Serif SC", Georgia, serif;     /* 标题 */
+  --serif: "MFJunYa", "Songti SC", "Noto Serif SC", Georgia, serif;          /* 标题（改用骏雅，新简黑太粗） */
   --sans: "MFJunYa", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; /* 正文 */
   --art: "MFShuYan", "Songti SC", "KaiTi", "STKaiti", serif;                 /* 文艺点缀 */
 }
@@ -300,6 +300,9 @@ body {
 .pref-row .pref-block { flex: 1; }
 .onboard-card .btn-primary { display: block; margin: 10px auto 0; }
 #statusPick-ob { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 10px; font-family: inherit; font-size: 13px; background: var(--surface-2); }
+.custom-input { width: 100%; min-height: 68px; padding: 11px 13px; border: 1px solid var(--line); border-radius: 12px; font-family: inherit; font-size: 13px; line-height: 1.65; background: var(--surface-2); color: var(--ink); resize: vertical; }
+.custom-input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+.custom-input::placeholder { color: var(--ink-faint); }
 
 .brand-mark.brand-hat { color: #fff; }
 .brand-mark svg { width: 26px; height: 26px; }

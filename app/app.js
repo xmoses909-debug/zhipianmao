@@ -14,7 +14,7 @@
   var SCALE_OPTS = ["剧集", "电影", "短剧"];
   var DEFAULT_PROFILE = {
     likes: ["古装", "美食", "治愈", "音乐", "热血", "运动", "日系文艺", "人文"],
-    dislikes: ["民国"], sources: ["豆瓣阅读", "晋江"], scale: ["剧集", "电影"], status: "优先已完结"
+    dislikes: ["民国"], sources: ["豆瓣阅读", "晋江"], scale: ["剧集", "电影"], status: "优先已完结", customWants: ""
   };
 
   /* 存储 */
@@ -25,6 +25,7 @@
     s.fav = s.fav || {}; s.feedback = s.feedback || {};
     s.profile = s.profile || JSON.parse(JSON.stringify(DEFAULT_PROFILE));
     if (!s.profile.sources) s.profile.sources = DEFAULT_PROFILE.sources.slice();
+    if (s.profile.customWants == null) s.profile.customWants = "";
     return s;
   }
   function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
@@ -86,7 +87,9 @@
     if (p.sources.length) h += "；来源 【" + p.sources.join(" · ") + "】";
     if (p.scale.length) h += "；体量 【" + p.scale.join(" · ") + "】";
     if (p.status && p.status !== "不限") h += "；" + p.status;
-    h += "。<br>选品始终：<b>好故事优先于题材</b>。";
+    h += "。";
+    if (p.customWants && p.customWants.trim()) h += "<br>另外你说：「" + esc(p.customWants.trim()) + "」——记下了，找的时候重点考虑。";
+    h += "<br>选品始终：<b>好故事优先于题材</b>。";
     box.innerHTML = h;
   }
   function renderPrefs(sfx) {
@@ -95,6 +98,8 @@
     renderToggle("sourcePick" + sfx, SOURCES, state.profile.sources);
     renderToggle("scalePick" + sfx, SCALE_OPTS, state.profile.scale);
     var sp = el("statusPick" + sfx); if (sp) sp.value = state.profile.status;
+    var ci = el("customWants" + sfx);
+    if (ci) { ci.value = state.profile.customWants || ""; ci.oninput = function () { state.profile.customWants = ci.value; save(); renderSummary("profileSummary" + sfx); if (current === "s-main") renderAssistant(); }; }
     renderSummary("profileSummary" + sfx);
   }
   function onProfileChange() {
@@ -117,6 +122,8 @@
     if (ups >= 2) line = "看您已经翻牌子点了 " + ups + " 部，眼光不错——收藏夹里留着，慢慢挑。";
     else if (downs >= 2) line = "您今天拍掉了 " + downs + " 部，口味挺刁的 😏 左边重新点点筛选，我再给您张罗几道新的。";
     else line = "本周给您备了 <b>" + n + "</b> 道主菜、<b>" + m + "</b> 道备选。没一道合胃口？左边随时翻牌子重选。";
+    var cw = (state.profile.customWants || "").trim();
+    if (cw) line += " 您特意点了道菜——「" + esc(cw.length > 24 ? cw.slice(0, 24) + "…" : cw) + "」，我记菜单上了。";
     el("assistantText").innerHTML = "🎩 <b>" + esc(u) + "</b>，今天 " + date + "。" + line;
   }
   function renderAccount() {

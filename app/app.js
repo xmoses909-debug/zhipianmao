@@ -136,7 +136,39 @@
   function renderHeader() {
     el("weekLabel").textContent = DATA.week.label + " · " + DATA.week.range;
     el("sourcePill").textContent = "本周来源：" + DATA.week.source;
-    el("agentNoteText").innerHTML = mdBold(DATA.agentNote);
+    renderAgentNote();
+  }
+  function renderAgentNote() {
+    if (livePicks && liveNote) el("agentNoteText").innerHTML = "🤖 <b>DeepSeek 实时选片</b>：" + esc(liveNote);
+    else el("agentNoteText").innerHTML = mdBold(DATA.agentNote);
+  }
+
+  /* ---------- AI 实时选片（前端 → 本地后端 → DeepSeek）---------- */
+  var livePicks = null, liveNote = "";
+  function discover() {
+    var btn = el("aiDiscover"), status = el("discoverStatus"), old = btn.textContent;
+    btn.disabled = true; btn.textContent = "🔍 正在让 DeepSeek 思考…";
+    status.textContent = ""; status.className = "discover-status";
+    fetch("/api/discover", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profile: state.profile, count: 3 })
+    }).then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (j && j.ok && j.picks && j.picks.length) {
+          livePicks = j.picks; liveNote = j.note || "";
+          renderAgentNote(); renderLists();
+          status.textContent = "✓ DeepSeek 为你挑了 " + j.picks.length + " 部（" + (j.model || "") + "）";
+          status.className = "discover-status ok";
+        } else {
+          status.textContent = "✗ " + ((j && j.error) || "没返回结果");
+          status.className = "discover-status err";
+        }
+      })
+      .catch(function () {
+        status.textContent = "✗ 连不上本地 AI 后端——请用「启动-AI.command」启动，并确认 backend/.env 填了 key。";
+        status.className = "discover-status err";
+      })
+      .then(function () { btn.disabled = false; btn.textContent = old; });
   }
   var filters = { genre: "", source: "", status: "", q: "", favOnly: false };
   function renderChipFilter(id, values, key) {
@@ -182,12 +214,12 @@
       + '<button class="act act-down' + (fb === "down" ? " on-down" : "") + '" data-act="down" data-id="' + b.id + '">👎</button></div></div>';
   }
   function renderLists() {
-    var weekly = DATA.picks.filter(matchFilter);
+    var weekly = (livePicks || DATA.picks).filter(matchFilter);
     var sk = function (b) { return (b.aiScore != null) ? b.aiScore : -1; };
     var cands = DATA.candidates.filter(matchFilter).sort(function (a, b) { return sk(b) - sk(a); });
     el("weeklyCards").innerHTML = weekly.map(bookCard).join("");
     el("candidateCards").innerHTML = cands.map(bookCard).join("");
-    el("weeklyCount").textContent = "（" + weekly.length + "）";
+    el("weeklyCount").textContent = "（" + weekly.length + (livePicks ? " · AI 实时" : "") + "）";
     el("emptyState").hidden = (weekly.length + cands.length) > 0;
     bindCards();
   }
@@ -261,6 +293,7 @@
     // 主页侧栏：状态下拉、重置、筛选、弹窗
     el("statusPick").onchange = function () { state.profile.status = el("statusPick").value; onProfileChange(); };
     el("resetPref").onclick = function () { state.profile = JSON.parse(JSON.stringify(DEFAULT_PROFILE)); onProfileChange(); renderLists(); };
+    el("aiDiscover").onclick = discover;
     el("searchBox").oninput = function (e) { filters.q = e.target.value; renderLists(); };
     el("statusFilter").onchange = function (e) { filters.status = e.target.value; renderLists(); };
     el("favOnly").onchange = function (e) { filters.favOnly = e.target.checked; renderLists(); };

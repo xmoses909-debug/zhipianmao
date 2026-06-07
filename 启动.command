@@ -13,7 +13,7 @@ if command -v python3 >/dev/null 2>&1; then
   ( sleep 1 && open "http://localhost:${PORT}/" ) &
   echo "浏览器将自动打开 http://localhost:${PORT}/"
   echo "（关闭本终端窗口即可停止服务）"
-  python3 -m http.server "${PORT}" --directory app
+  python3 serve.py "${PORT}"
 else
   echo "未找到 python3，改为直接用浏览器打开 index.html ..."
   open "app/index.html"

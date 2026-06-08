@@ -8,12 +8,18 @@
   var HAT = '<svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">'
     + '<path d="M12 39 C 9 25, 31 14, 45 23 C 51 27, 52 34, 50 39"/><path d="M12 39 L 50 39"/><path d="M12 39 C 5 40, 7 45, 17 44"/></svg>';
 
-  var PALETTE = ["古装", "美食", "治愈", "音乐", "热血", "运动", "电竞", "年代", "民国", "都市",
-    "校园", "职场", "群像", "励志", "悬疑", "探案", "科幻", "玄幻", "历史", "言情", "日系文艺", "人文"];
+  // 标签按 4 大类归组（时代 / 类型 / 题材 / 调性），不再是一堆乱标签
+  var PALETTE_GROUPS = [
+    { name: "时代", tags: ["历史", "古装", "民国", "近代", "现代", "架空", "未来"] },
+    { name: "类型", tags: ["言情", "悬疑", "推理", "科幻", "奇幻", "武侠", "现实", "犯罪"] },
+    { name: "题材", tags: ["美食", "音乐", "运动", "电竞", "职场", "校园", "娱乐圈", "群像"] },
+    { name: "调性", tags: ["治愈", "热血", "励志", "文艺", "人文", "爽感"] }
+  ];
+  var PALETTE = PALETTE_GROUPS.reduce(function (a, g) { return a.concat(g.tags); }, []);
   var SOURCES = ["豆瓣阅读", "晋江", "番茄", "文学期刊"];
   var SCALE_OPTS = ["剧集", "电影", "短剧"];
   var DEFAULT_PROFILE = {
-    likes: ["古装", "美食", "治愈", "音乐", "热血", "运动", "日系文艺", "人文"],
+    likes: ["古装", "美食", "音乐", "运动", "治愈", "热血", "文艺", "人文"],
     dislikes: [], sources: ["豆瓣阅读", "晋江"], scale: ["剧集", "电影"], status: "优先已完结", customWants: ""
   };
 
@@ -26,6 +32,11 @@
     s.profile = s.profile || JSON.parse(JSON.stringify(DEFAULT_PROFILE));
     if (!s.profile.sources) s.profile.sources = DEFAULT_PROFILE.sources.slice();
     if (s.profile.customWants == null) s.profile.customWants = "";
+    s.profile.dislikes = [];  // 两态标签后不再有"不感冒"；清掉历史脏数据（曾导致过度过滤、选片为空）
+    // 标签归类改版：把旧标签迁移到新分类标签，老用户的口味不丢
+    var o2n = { "日系文艺": "文艺", "都市": "现代", "年代": "现实", "探案": "推理", "玄幻": "奇幻" };
+    s.profile.likes = (s.profile.likes || []).map(function (g) { return o2n[g] || g; })
+      .filter(function (g, i, a) { return a.indexOf(g) === i; });
     return s;
   }
   function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
@@ -59,9 +70,13 @@
   function genreState(g) { return state.profile.likes.indexOf(g) > -1 ? "like" : ""; }
   function renderGenrePalette(id) {
     var box = el(id); if (!box) return;
-    box.innerHTML = PALETTE.map(function (g) {
-      var st = genreState(g);
-      return '<span class="chip pref ' + st + '" data-g="' + g + '">' + (st === "like" ? "✓ " : "") + g + "</span>";
+    box.innerHTML = PALETTE_GROUPS.map(function (grp) {
+      var chips = grp.tags.map(function (g) {
+        var st = genreState(g);
+        return '<span class="chip pref ' + st + '" data-g="' + g + '">' + (st === "like" ? "✓ " : "") + g + "</span>";
+      }).join("");
+      return '<div class="pref-group"><span class="pref-group-name">' + grp.name
+        + '</span><div class="chips chips-pref">' + chips + "</div></div>";
     }).join("");
     [].forEach.call(box.querySelectorAll(".chip"), function (c) { c.onclick = function () { cycleGenre(c.getAttribute("data-g")); }; });
   }
@@ -187,7 +202,7 @@
     startProgress();
     fetch("/api/discover", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ profile: state.profile, count: 3 })
+      body: JSON.stringify({ profile: state.profile, count: 5 })
     }).then(function (r) { return r.json(); })
       .then(function (j) {
         if (j && j.ok && j.picks && j.picks.length) {

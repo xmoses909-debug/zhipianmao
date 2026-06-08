@@ -97,6 +97,11 @@ body {
 .taste-label { font-size: 11px; color: var(--ink-faint); display: block; margin-bottom: 7px; letter-spacing: .2px; }
 .taste-label em { font-style: normal; font-size: 10px; color: var(--ink-faint); font-weight: 400; }
 
+/* 标签分组（时代/类型/题材/调性）*/
+.genre-groups { display: flex; flex-direction: column; gap: 11px; }
+.pref-group-name { font-size: 11px; color: var(--accent-deep); font-weight: 700; display: block; margin-bottom: 6px; letter-spacing: .5px; }
+.pref-group .chips { margin: 0; }
+
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip {
   font-size: 12px; padding: 4px 11px; border-radius: 999px;

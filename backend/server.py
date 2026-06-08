@@ -48,7 +48,9 @@ SYSTEM_PROMPT = (
     "要求：\n"
     "- 只能从候选库里选，绝不编造书目；用候选的 id 指代。\n"
     "- 综合分 = 故事力×0.6 + 题材×0.4。题材命中但故事平庸要降权；题材不完全对但故事极好可加权。\n"
-    "- 特别重视用户的「自定义需求」，据此挑选并解释；若候选库里实在没有贴合的，宁可少推、并在 note 里说明。\n"
+    "- 特别重视用户的「自定义需求」，据此挑选并解释。\n"
+    "- 【硬性要求】即使候选库里没有完全贴合需求的，也必须挑出 3-5 部**最接近**的（按相似度从高到低），"
+    "并在 fitReason / matchNote 里老实说明它跟需求像在哪、差在哪。**绝不返回空 picks**。\n"
     "- 诚实：改编难点、过审风险、体量问题都要点出，不吹。\n"
     "- 只输出 JSON，不要任何多余文字、不要 markdown 代码块。\n"
     "输出 JSON 结构：\n"
@@ -74,8 +76,9 @@ def build_user_msg(profile, corpus, count):
         + "不感冒：" + "、".join(p.get("dislikes", []) or ["(无)"]) + "\n"
         + "体量偏好：" + "、".join(p.get("scale", []) or ["(不限)"]) + "；完结状态：" + str(p.get("status", "不限")) + "\n"
         + "【自定义需求 · 最重要】：" + (p.get("customWants", "").strip() or "（无，按题材口味挑即可）") + "\n\n"
-        + "下面的候选库是【刚从晋江实时抓来的新书】（已粗筛掉明显影视化/已售的），多为还没被大公司买走的早期作品。\n"
-        + "请从中挑最多 " + str(count) + " 部最值得改编的，按综合分从高到低；务必逐部读懂 synopsis(文案) 再判断故事力，别只看题材标签。\n\n"
+        + "下面的候选库是【刚从各文学网站实时抓来的新书】（已粗筛掉明显影视化/已售的），多为还没被大公司买走的早期作品。\n"
+        + "请从中挑 3-5 部最值得改编的，按综合分从高到低；务必逐部读懂 synopsis(文案) 再判断故事力，别只看题材标签。\n"
+        + "即使没有完全贴合自定义需求的，也要给出最接近的 3-5 部，并在每部里说明差距。绝不空手而归。\n\n"
         + "候选作品库(JSON)：\n" + json.dumps(lib, ensure_ascii=False)
     )
 
@@ -105,19 +108,35 @@ def call_deepseek(key, system, user):
 
 
 def gather_pool(profile, base_corpus, want=24):
-    """组候选池：优先用"实时抓来的晋江新书"；抓取失败/太少时，降级用本地候选库兜底。
-    这一步是"选题雷达"的关键——让大模型挑的是刚抓的新书，而不是写死的 10 部。"""
-    scraped = []
+    """组候选池：三源【按配额】取，保证晋江/番茄/豆瓣都进到大模型眼前。
+    晋江/番茄自动抓（robots 允许）；豆瓣以本地精选纳入（其书单接口 /j/ 被 robots 禁，不自动抓）。
+    为什么按配额：晋江一次 400 本，若直接混排会把番茄、豆瓣全挤出前 24——配额保证三源都露脸。"""
     try:
-        scraped = scraper.scrape_jjwxc()
+        scraped = scraper.scrape_all()
     except Exception as e:
         print("   [discover] 实时抓取异常：", repr(e))
-    cand = scraper.filter_for_profile(scraped, profile, limit=want) if scraped else []
-    if len(cand) >= 3:
-        return cand, len(scraped)  # 正常路径：全是刚抓的新书
-    # 降级：别让用户点了个寂寞——用本地候选库兜底
-    fb = scraper.filter_for_profile(list(base_corpus), profile, limit=want) or list(base_corpus)[:want]
-    return fb, len(scraped)
+        scraped = []
+    by = lambda s: [b for b in scraped if s in (b.get("source") or "")]
+    db, jj, fq = by("豆瓣"), by("晋江"), by("番茄")
+    # 豆瓣为主力：豆瓣14 + 晋江6 + 番茄4。豆瓣多为连载——按帽帽要求放宽"完结"门槛，别筛掉。
+    db_profile = dict(profile)
+    db_profile["status"] = "不限"
+    quota = (scraper.filter_for_profile(db, db_profile, limit=14)
+             + scraper.filter_for_profile(jj, profile, limit=6)
+             + scraper.filter_for_profile(fq, profile, limit=4))
+    seen, merged = set(), []
+    for b in quota:
+        t = (b.get("title") or "").strip()
+        if t and t not in seen:
+            seen.add(t)
+            merged.append(b)
+    if len(merged) < 3:  # 兜底：抓取失败时用本地精选，别让用户点了个寂寞
+        for b in (scraper.filter_for_profile(list(base_corpus), profile, limit=want) or list(base_corpus)):
+            t = (b.get("title") or "").strip()
+            if t and t not in seen:
+                seen.add(t)
+                merged.append(b)
+    return merged[:want], len(scraped)
 
 
 def discover(profile, count=3):

@@ -5,7 +5,8 @@
 #   - POST /api/discover：把用户口味+需求 + 候选库 喂给 DeepSeek，返回真实的选品+改编分析
 # key 从环境变量 DEEPSEEK_API_KEY 或 backend/.env 读取，绝不写进代码/仓库。
 import http.server, socketserver, os, sys, json, urllib.request, urllib.error
-import scraper  # 同目录的实时抓取模块（晋江排行榜 → 新书候选）
+import scraper  # 同目录的实时抓取模块（豆瓣/晋江/番茄 → 新书候选）
+import db        # 同目录的数据层（SQLite：真账号 + 收藏 + 点赞 + 偏好）
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.join(os.path.dirname(ROOT), "app")
@@ -190,39 +191,100 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         super().end_headers()
 
-    def do_POST(self):
-        if self.path.split("?")[0] != "/api/discover":
-            self.send_response(404)
-            self.end_headers()
-            return
-        try:
-            n = int(self.headers.get("Content-Length", 0) or 0)
-            payload = json.loads(self.rfile.read(n).decode("utf-8")) if n else {}
-        except Exception:
-            payload = {}
-        print(">> /api/discover  自定义需求:", (payload.get("profile") or {}).get("customWants", "")[:40])
-        result = discover(payload.get("profile", {}), int(payload.get("count", 3) or 3))
-        if result.get("ok"):
-            print("   ✓ 实时抓取 %d 本 → 候选池 %d → 返回 %d 部" % (
-                result.get("scrapedCount", 0), result.get("poolSize", 0), len(result.get("picks", []))))
-        else:
-            print("   ✗", result.get("error"))
-        out = json.dumps(result, ensure_ascii=False).encode("utf-8")
-        self.send_response(200 if result.get("ok") else 400)
+    # ---------- 小工具 ----------
+    def _json(self, obj, code=200):
+        out = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(out)
 
+    def _body(self):
+        try:
+            n = int(self.headers.get("Content-Length", 0) or 0)
+            return json.loads(self.rfile.read(n).decode("utf-8")) if n else {}
+        except Exception:
+            return {}
+
+    def _token(self):
+        h = self.headers.get("Authorization", "")
+        return h[7:].strip() if h.startswith("Bearer ") else ""
+
+    def _user(self):
+        return db.user_by_token(self._token())
+
+    # ---------- GET ----------
+    def do_GET(self):
+        path = self.path.split("?")[0]
+        if path == "/api/health":
+            return self._json({"ok": True, "service": "制片帽", "model": MODEL})
+        if path == "/api/me":  # 凭 token 还原登录态（账号 + 收藏 + 点赞 + 偏好）
+            u = self._user()
+            if not u:
+                return self._json({"ok": False, "error": "未登录"}, 401)
+            st = db.get_user_state(u["id"])
+            return self._json({"ok": True, "username": u["username"],
+                               "profile": db.get_profile(u["id"]),
+                               "fav": st["fav"], "feedback": st["feedback"]})
+        return super().do_GET()  # 其余交给静态文件服务
+
+    # ---------- POST ----------
+    def do_POST(self):
+        path = self.path.split("?")[0]
+        body = self._body()
+
+        # 账号（无需登录）
+        if path == "/api/register":
+            r, err = db.register(body.get("username"), body.get("password"))
+            return self._json({"ok": bool(r), "error": err, "token": (r or {}).get("token"),
+                               "username": (r or {}).get("username")}, 200 if r else 400)
+        if path == "/api/login":
+            r, err = db.login(body.get("username"), body.get("password"))
+            return self._json({"ok": bool(r), "error": err, "token": (r or {}).get("token"),
+                               "username": (r or {}).get("username")}, 200 if r else 400)
+        if path == "/api/logout":
+            db.logout(self._token())
+            return self._json({"ok": True})
+
+        # 需登录：收藏 / 点赞 / 存偏好
+        if path in ("/api/favorite", "/api/feedback", "/api/profile"):
+            u = self._user()
+            if not u:
+                return self._json({"ok": False, "error": "登录已失效，请重新登录"}, 401)
+            if path == "/api/favorite":
+                db.set_favorite(u["id"], body.get("bookId"), body.get("book"), bool(body.get("on")))
+            elif path == "/api/feedback":
+                db.set_feedback(u["id"], body.get("bookId"), body.get("value"))
+            else:
+                db.save_profile(u["id"], body.get("profile") or {})
+            return self._json({"ok": True})
+
+        # 选片（开放：登录与否都能用；真账号只影响收藏/偏好持久化）
+        if path == "/api/discover":
+            print(">> /api/discover  自定义需求:", (body.get("profile") or {}).get("customWants", "")[:40])
+            result = discover(body.get("profile", {}), int(body.get("count", 5) or 5))
+            if result.get("ok"):
+                print("   ✓ 实时抓取 %d 本 → 候选池 %d → 返回 %d 部" % (
+                    result.get("scrapedCount", 0), result.get("poolSize", 0), len(result.get("picks", []))))
+            else:
+                print("   ✗", result.get("error"))
+            return self._json(result, 200 if result.get("ok") else 400)
+
+        self._json({"ok": False, "error": "未知接口"}, 404)
+
 
 if __name__ == "__main__":
     PORT = int(sys.argv[1]) if len(sys.argv) > 1 else int(os.environ.get("PORT") or 4173)
-    has_key = "✓ 已配置" if load_key() else "✗ 未配置(去 backend/.env 填)"
-    print("制片帽 · AI 后端启动")
+    db.init()
+    has_key = "✓ 已配置" if load_key() else "✗ 未配置(去 backend/key.txt 填)"
+    print("制片帽 · 后端启动")
     print("  网址      http://localhost:%d" % PORT)
     print("  模型      %s" % MODEL)
-    print("  DEEPSEEK_API_KEY  %s" % has_key)
-    print("  候选库    本地 %d 部 + 晋江排行榜实时抓取" % len(load_corpus()))
-    socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("", PORT), Handler) as httpd:
+    print("  DeepSeek key      %s" % has_key)
+    print("  候选库    本地 %d 部 + 豆瓣/晋江/番茄 实时抓取" % len(load_corpus()))
+    print("  数据库    %s（已注册 %d 人）" % (os.path.basename(db.DB_PATH), db.stats()["users"]))
+    # 多线程：支持多人同时用（单线程会被一次 100 秒的选片堵死）
+    http.server.ThreadingHTTPServer.allow_reuse_address = True
+    with http.server.ThreadingHTTPServer(("", PORT), Handler) as httpd:
         httpd.serve_forever()

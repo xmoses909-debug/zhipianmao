@@ -4,5 +4,6 @@ node_modules/
 .claude/
 backend/.env
 backend/key.txt
+backend/data.db
 __pycache__/
 *.pyc

@@ -325,7 +325,20 @@ def scrape_douban(per_tag=40):
 
 # ========== 三源汇总（带缓存）==========
 _CACHE = {"t": 0.0, "data": None}
-_CACHE_TTL = 3600  # 1 小时：避免每次点选片都重抓，也降低豆瓣封查风险
+_CACHE_TTL = 3600  # 默认 1 小时：避免每次点选片都重抓，也降低豆瓣封查风险
+
+
+def set_cache_ttl(seconds):
+    """常驻服务器可把缓存有效期设成"刷新周期"（如一周）：这样用户点选片永远命中缓存（秒回），
+    只有后台定时线程去真抓——既保证每周新鲜，又把豆瓣请求量压到最低（降封查风险）。"""
+    global _CACHE_TTL
+    _CACHE_TTL = max(60, int(seconds))
+
+
+def cache_info():
+    """缓存现状：最近一次抓取时间戳 + 条数（给后台/前端看新鲜度）。"""
+    return {"t": _CACHE["t"], "count": len(_CACHE["data"] or [])}
+
 
 def scrape_all(force=False):
     """三源：豆瓣(主力) + 晋江 + 番茄。带 1 小时缓存。"""

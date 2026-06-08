@@ -23,28 +23,80 @@
     dislikes: [], sources: ["豆瓣阅读", "晋江"], scale: ["剧集", "电影"], status: "优先已完结", customWants: ""
   };
 
-  /* 存储 */
+  /* 存储（本地）+ 后端 API（带"无后端→本地演示"降级）
+     设计：localStorage 始终是缓存/降级层；探测到后端且已登录时，收藏/点赞/偏好额外同步云端。
+     这样线上静态版（无后端）仍能完整演示，本地/部署版则是真账号、可跨设备同步。 */
   var KEY = "maozhipian.v1";
+  var TKEY = "maozhipian.token";   // 登录令牌：存本地，下次启动用 /api/me 还原
+  var BACKEND = false;             // 启动时探测 /api/health；线上静态版探测不到→走本地演示
   var state = load();
+
+  function normalizeProfile(p) {
+    p = p || JSON.parse(JSON.stringify(DEFAULT_PROFILE));
+    if (!p.likes) p.likes = [];
+    if (!p.sources) p.sources = DEFAULT_PROFILE.sources.slice();
+    if (!p.scale) p.scale = DEFAULT_PROFILE.scale.slice();
+    if (!p.status) p.status = DEFAULT_PROFILE.status;
+    if (p.customWants == null) p.customWants = "";
+    p.dislikes = [];  // 两态标签后不再有"不感冒"；清掉历史脏数据（曾导致过度过滤、选片为空）
+    // 标签归类改版：把旧标签迁移到新分类标签，老用户的口味不丢
+    var o2n = { "日系文艺": "文艺", "都市": "现代", "年代": "现实", "探案": "推理", "玄幻": "奇幻" };
+    p.likes = p.likes.map(function (g) { return o2n[g] || g; })
+      .filter(function (g, i, a) { return a.indexOf(g) === i; });
+    return p;
+  }
   function load() {
     var s; try { s = JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { s = {}; }
     s.fav = s.fav || {}; s.feedback = s.feedback || {};
-    s.profile = s.profile || JSON.parse(JSON.stringify(DEFAULT_PROFILE));
-    if (!s.profile.sources) s.profile.sources = DEFAULT_PROFILE.sources.slice();
-    if (s.profile.customWants == null) s.profile.customWants = "";
-    s.profile.dislikes = [];  // 两态标签后不再有"不感冒"；清掉历史脏数据（曾导致过度过滤、选片为空）
-    // 标签归类改版：把旧标签迁移到新分类标签，老用户的口味不丢
-    var o2n = { "日系文艺": "文艺", "都市": "现代", "年代": "现实", "探案": "推理", "玄幻": "奇幻" };
-    s.profile.likes = (s.profile.likes || []).map(function (g) { return o2n[g] || g; })
-      .filter(function (g, i, a) { return a.indexOf(g) === i; });
+    s.profile = normalizeProfile(s.profile);
     return s;
   }
   function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+
+  /* ---- 令牌 + API 小工具 ---- */
+  function token() { try { return localStorage.getItem(TKEY) || ""; } catch (e) { return ""; } }
+  function setToken(t) { try { t ? localStorage.setItem(TKEY, t) : localStorage.removeItem(TKEY); } catch (e) {} }
+  function authed() { return BACKEND && !!token(); }   // 真账号在线：收藏/偏好才走云端
+  function api(path, opts) {
+    opts = opts || {};
+    var h = { "Content-Type": "application/json" };
+    if (token()) h["Authorization"] = "Bearer " + token();
+    return fetch(path, {
+      method: opts.method || "GET", headers: h,
+      body: opts.body ? JSON.stringify(opts.body) : undefined
+    }).then(function (r) {
+      return r.json().then(function (j) { return { status: r.status, body: j }; },
+        function () { return { status: r.status, body: {} }; });
+    });
+  }
+  function probeBackend() {
+    return fetch("/api/health").then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) { BACKEND = !!(j && j.ok); return BACKEND; })
+      .catch(function () { BACKEND = false; return false; });
+  }
+  function adoptServerState(body) {
+    // 真账号为准：用云端账号/偏好/收藏/点赞覆盖本地
+    state.account = { username: body.username };
+    if (body.profile) state.profile = normalizeProfile(body.profile);
+    var fav = {}; Object.keys(body.fav || {}).forEach(function (k) { fav[k] = true; });
+    state.fav = fav;
+    state.feedback = body.feedback || {};
+    save();
+  }
+  /* 把口味偏好同步云端：防抖 800ms（避免每点一下就发一次） */
+  var profSyncTimer = null;
+  function syncProfile() {
+    if (!authed()) return;
+    if (profSyncTimer) clearTimeout(profSyncTimer);
+    profSyncTimer = setTimeout(function () { api("/api/profile", { method: "POST", body: { profile: state.profile } }); }, 800);
+  }
+  function pushProfile() { if (authed()) api("/api/profile", { method: "POST", body: { profile: state.profile } }); }
 
   /* 工具 */
   function el(id) { return document.getElementById(id); }
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
   function allBooks() { return (livePicks || []).concat(DATA.picks).concat(DATA.candidates); }
+  function bookById(id) { return allBooks().filter(function (x) { return x.id === id; })[0] || { id: id }; }
   function headlineScore(b) { return (b.aiScore != null) ? b.aiScore : b.matchScore; }
   function sourceShort(b) {
     if (!b.source) return "—";
@@ -114,11 +166,11 @@
     renderToggle("scalePick" + sfx, SCALE_OPTS, state.profile.scale);
     var sp = el("statusPick" + sfx); if (sp) sp.value = state.profile.status;
     var ci = el("customWants" + sfx);
-    if (ci) { ci.value = state.profile.customWants || ""; ci.oninput = function () { state.profile.customWants = ci.value; save(); renderSummary("profileSummary" + sfx); if (current === "s-main") renderAssistant(); }; }
+    if (ci) { ci.value = state.profile.customWants || ""; ci.oninput = function () { state.profile.customWants = ci.value; save(); syncProfile(); renderSummary("profileSummary" + sfx); if (current === "s-main") renderAssistant(); }; }
     renderSummary("profileSummary" + sfx);
   }
   function onProfileChange() {
-    save();
+    save(); syncProfile();
     var sfx = current === "s-onboard" ? "-ob" : "";
     renderPrefs(sfx);
     if (current === "s-main") { renderLists(); renderAssistant(); }
@@ -143,7 +195,11 @@
   }
   function renderAccount() {
     el("account").innerHTML = '<span class="acc-name">👤 ' + esc((state.account && state.account.username) || "") + '</span><button class="acc-out" id="logout">退出</button>';
-    el("logout").onclick = function () { if (confirm("退出当前账号？（偏好会保留）")) { delete state.account; save(); showScreen("s-welcome"); } };
+    el("logout").onclick = function () {
+      if (!confirm("退出当前账号？")) return;
+      if (authed()) api("/api/logout", { method: "POST" });
+      setToken(""); delete state.account; save(); showScreen("s-welcome");
+    };
   }
 
   /* ---------- 主页头部 / 筛选 ---------- */
@@ -286,8 +342,13 @@
     });
   }
   function toggle(id, act) {
-    if (act === "fav") state.fav[id] = !state.fav[id];
-    else state.feedback[id] = (state.feedback[id] === act) ? undefined : act;
+    if (act === "fav") {
+      state.fav[id] = !state.fav[id];
+      if (authed()) api("/api/favorite", { method: "POST", body: { bookId: id, book: bookById(id), on: !!state.fav[id] } });
+    } else {
+      state.feedback[id] = (state.feedback[id] === act) ? undefined : act;
+      if (authed()) api("/api/feedback", { method: "POST", body: { bookId: id, value: state.feedback[id] || "" } });
+    }
     save(); updateLearnNote();
   }
   function updateLearnNote() {
@@ -331,18 +392,61 @@
     renderPrefs(""); renderGenreFilter(); renderSourceFilter(); updateLearnNote(); renderLists();
   }
 
+  /* ---------- 账号：注册 / 登录（真后端，带本地演示降级） ---------- */
+  var authMode = "register";  // register | login
+  function authErr(m) { var e = el("regErr"); if (e) { e.textContent = m; e.hidden = false; } }
+  function reflectMode() {
+    // 按"有无后端 + 注册/登录"刷新注册页文案
+    var t = el("authTitle"), sub = el("authSub"), btn = el("toOnboard"), sw = el("authSwitch"), note = el("authNote");
+    if (t) t.textContent = authMode === "register" ? "创建你的账号" : "登录你的账号";
+    if (sub) sub.textContent = authMode === "register" ? "几秒钟，建一个属于你的选题雷达" : "欢迎回来，继续你的选题雷达";
+    if (btn) btn.textContent = authMode === "register" ? "注册并继续 →" : "登录 →";
+    if (sw) sw.textContent = authMode === "register" ? "已有账号？点此登录" : "没有账号？点此注册";
+    if (note) note.innerHTML = BACKEND
+      ? "🔐 <b>真账号</b>：用户名+密码加密存在服务器，可多设备登录，收藏与口味偏好云端同步。"
+      : "⚠ <b>演示版</b>（当前未连到后端）：账号与收藏暂存在本机浏览器，不会上传、也无法多设备登录。启动「启动-AI.command」后即为真账号。";
+  }
+  function bindOnboardStatus() {
+    var sob = el("statusPick-ob"); if (sob) sob.onchange = function () { state.profile.status = sob.value; onProfileChange(); };
+  }
+  function submitAuth() {
+    var u = el("regUser").value.trim(), p = el("regPass").value;
+    if (!u || !p) return authErr("用户名和密码都填一下吧。");
+    el("regErr").hidden = true;
+    if (!BACKEND) {  // 无后端：本地演示账号（线上静态版）
+      state.account = { username: u, t: 1 }; save();
+      showScreen("s-onboard"); renderPrefs("-ob"); bindOnboardStatus(); return;
+    }
+    var btn = el("toOnboard"); btn.disabled = true;
+    var path = authMode === "register" ? "/api/register" : "/api/login";
+    api(path, { method: "POST", body: { username: u, password: p } }).then(function (res) {
+      btn.disabled = false;
+      var j = res.body || {};
+      if (!j.ok) {
+        if (authMode === "register" && /已经被注册/.test(j.error || "")) { authMode = "login"; reflectMode(); }
+        return authErr(j.error || "没成功，再试一下。");
+      }
+      setToken(j.token);
+      if (authMode === "login") {
+        // 老用户登录：拉云端状态，直接进主页（不自动选片，省一次等待；可手动点"重新为我选片"）
+        api("/api/me").then(function (r2) {
+          if (r2.status === 200 && r2.body && r2.body.ok) adoptServerState(r2.body);
+          else { state.account = { username: u }; save(); }
+          enterMain();
+        });
+      } else {  // 新用户注册：进选偏好
+        state.account = { username: j.username }; save();
+        showScreen("s-onboard"); renderPrefs("-ob"); bindOnboardStatus();
+      }
+    }).catch(function () { btn.disabled = false; authErr("没连上服务器，稍后再试。"); });
+  }
+
   /* ---------- 流程绑定 ---------- */
   function bindFlow() {
-    el("toRegister").onclick = function () { showScreen("s-register"); };
-    el("toOnboard").onclick = function () {
-      var u = el("regUser").value.trim(), p = el("regPass").value;
-      if (!u || !p) { el("regErr").textContent = "用户名和密码都填一下吧。"; el("regErr").hidden = false; return; }
-      el("regErr").hidden = true;
-      state.account = { username: u, t: 1 }; save();
-      showScreen("s-onboard"); renderPrefs("-ob");
-      var sob = el("statusPick-ob"); if (sob) sob.onchange = function () { state.profile.status = sob.value; onProfileChange(); };
-    };
-    el("toMain").onclick = function () { enterMain(); discover(); };
+    el("toRegister").onclick = function () { authMode = "register"; reflectMode(); showScreen("s-register"); };
+    el("authSwitch").onclick = function () { authMode = (authMode === "register") ? "login" : "register"; if (el("regErr")) el("regErr").hidden = true; reflectMode(); };
+    el("toOnboard").onclick = submitAuth;
+    el("toMain").onclick = function () { pushProfile(); enterMain(); discover(); };
 
     // 主页侧栏：状态下拉、重置、筛选、弹窗
     el("statusPick").onchange = function () { state.profile.status = el("statusPick").value; onProfileChange(); };
@@ -358,5 +462,21 @@
 
   /* ---------- 启动 ---------- */
   injectLogos(); bindFlow();
-  if (state.account) enterMain(); else showScreen("s-welcome");
+  boot();
+  function boot() {
+    probeBackend().then(function () {
+      reflectMode();
+      if (BACKEND) {
+        // 真账号模式：必须有有效令牌才进主页（忽略可能残留的本地演示账号）
+        if (token()) {
+          return api("/api/me").then(function (res) {
+            if (res.status === 200 && res.body && res.body.ok) { adoptServerState(res.body); enterMain(); }
+            else { setToken(""); showScreen("s-welcome"); }
+          }).catch(function () { showScreen("s-welcome"); });
+        }
+        return showScreen("s-welcome");
+      }
+      if (state.account) enterMain(); else showScreen("s-welcome");  // 无后端 · 本地演示
+    });
+  }
 })();

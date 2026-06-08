@@ -38,13 +38,14 @@
   <section class="screen auth" id="s-register" hidden>
     <div class="auth-card">
       <div class="auth-logo logo-slot"></div>
-      <h2>创建你的账号</h2>
-      <p class="auth-sub">几秒钟，建一个属于你的选题雷达</p>
+      <h2 id="authTitle">创建你的账号</h2>
+      <p class="auth-sub" id="authSub">几秒钟，建一个属于你的选题雷达</p>
       <label class="field"><span>用户名</span><input id="regUser" type="text" placeholder="给自己起个名字" autocomplete="username" /></label>
       <label class="field"><span>密码</span><input id="regPass" type="password" placeholder="设置一个密码" autocomplete="new-password" /></label>
       <p class="auth-err" id="regErr" hidden></p>
       <button class="btn-primary" id="toOnboard">注册并继续 →</button>
-      <p class="auth-note">⚠ 演示版：账号暂存在本机浏览器，<b>不是真账号</b>（不会上传、也无法多设备登录）。上线接后端后才会变成真正的账号系统。</p>
+      <button class="auth-switch" id="authSwitch" type="button">已有账号？点此登录</button>
+      <p class="auth-note" id="authNote">⚠ 演示版：账号暂存在本机浏览器，<b>不是真账号</b>。</p>
     </div>
   </section>
 

@@ -296,6 +296,9 @@ body {
 .field input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
 .auth-err { color: var(--accent); font-size: 12.5px; margin-bottom: 12px; }
 .auth-card .btn-primary { width: 100%; }
+.auth-switch { display: block; width: 100%; margin: 12px 0 0; padding: 4px; background: none; border: none; cursor: pointer;
+  font-family: var(--sans); font-size: 13px; color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.auth-switch:hover { filter: brightness(1.1); }
 .auth-note { font-size: 11px; color: var(--ink-faint); line-height: 1.65; margin-top: 18px; background: var(--surface-2); border-radius: 10px; padding: 11px; text-align: left; }
 
 .onboard-card { background: var(--surface); border: 1px solid var(--line); border-radius: 22px; box-shadow: var(--shadow); padding: 34px; width: 100%; max-width: 560px; }

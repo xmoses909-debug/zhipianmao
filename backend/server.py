@@ -8,6 +8,7 @@ import http.server, socketserver, os, sys, json, urllib.request, urllib.error
 import threading, time
 import scraper  # 同目录的实时抓取模块（豆瓣/晋江/番茄 → 新书候选）
 import db        # 同目录的数据层（SQLite：真账号 + 收藏 + 点赞 + 偏好）
+import production  # 制作板块（制片统筹）。互不干扰约定：/api/production/* 全部转给它，业务勿混写在本文件
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.join(os.path.dirname(ROOT), "app")
@@ -248,6 +249,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     # ---------- GET ----------
     def do_GET(self):
+        if self.path.startswith("/api/production"):  # 制作板块挂载钩子（勿动；逻辑全在 production.py）
+            return production.handle(self, "GET", self.path)
         path = self.path.split("?")[0]
         if path == "/api/health":
             return self._json({"ok": True, "service": "制片帽", "model": MODEL,
@@ -264,6 +267,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     # ---------- POST ----------
     def do_POST(self):
+        if self.path.startswith("/api/production"):  # 制作板块挂载钩子（勿动；逻辑全在 production.py）
+            return production.handle(self, "POST", self.path)
         path = self.path.split("?")[0]
         body = self._body()
 

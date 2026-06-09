@@ -11,6 +11,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="制片帽" />
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="production.css" /><!-- 制作板块（制片统筹）样式，互不干扰：全部 .prod- 前缀 -->
 </head>
 <body>
 
@@ -93,7 +94,7 @@
       </div>
       <nav class="modules">
         <button class="module active" data-module="策划">策划 · 选题雷达</button>
-        <button class="module disabled" title="即将上线">制作 · 剧本拆解 <em>即将上线</em></button>
+        <button class="module" data-module="制作">制作 · 制片统筹</button><!-- 事件由 production.js 接管 -->
         <button class="module disabled" title="即将上线">发行 <em>即将上线</em></button>
       </nav>
       <div class="account" id="account"></div>
@@ -203,6 +204,7 @@
 
   <script src="data/recommendations.js"></script>
   <script src="app.js"></script>
+  <script src="production.js"></script><!-- 制作板块（制片统筹），独立 IIFE，不碰 app.js 内部 -->
   <script>
     /* 测试阶段暂停 Service Worker（避免旧缓存干扰）；部署到 Pages 时再启用稳健版。同时清理可能残留的旧 SW/缓存。 */
     if ("serviceWorker" in navigator) {

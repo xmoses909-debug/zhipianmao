@@ -341,3 +341,77 @@
   .topbar { flex-wrap: wrap; gap: 8px; }
   .module { padding: 7px 12px; font-size: 12px; white-space: nowrap; }
 }
+
+/* ===================================================================
+   二级导航（制片统筹 / 行业人才库）+ 人才库样式（沿用墨绿 --prod-* 色系）
+   =================================================================== */
+.prod-subnav { background: rgba(246,249,246,.7); border-bottom: 1px solid var(--prod-line); position: sticky; top: 70px; z-index: 4; }
+.prod-subnav-inner { max-width: 1280px; margin: 0 auto; padding: 8px 32px; display: flex; align-items: center; gap: 8px; }
+.prod-secnav { border: 1px solid transparent; background: transparent; color: var(--prod-mid); padding: 6px 16px; border-radius: 999px; font-size: 13.5px; cursor: pointer; font-family: inherit; transition: all .15s; }
+.prod-secnav:hover:not(.active) { color: var(--prod-deep); }
+.prod-secnav.active { background: var(--prod-accent); color: #fff; font-weight: 600; box-shadow: var(--shadow-sm); }
+.prod-subnav-hint { margin-left: auto; font-size: 11.5px; color: var(--ink-faint); }
+
+/* 搜索条 + 工种/量级筛选 */
+.prod-talent-search { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.prod-tsearch { flex: 1; min-width: 200px; padding: 10px 14px; border: 1px solid var(--prod-line); border-radius: 10px; font-family: inherit; font-size: 14px; background: var(--prod-softer); color: var(--ink); }
+.prod-tsearch:focus { outline: 2px solid var(--prod-soft); border-color: var(--prod-accent); background: #fff; }
+.prod-tselect { padding: 10px 12px; border: 1px solid var(--prod-line); border-radius: 10px; font-family: inherit; font-size: 13px; background: var(--prod-softer); color: var(--ink); }
+.prod-pro-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.prod-pro-chip { font-size: 12.5px; padding: 5px 13px; border-radius: 999px; background: var(--prod-softer); border: 1px solid var(--prod-line); color: var(--prod-mid); cursor: pointer; transition: all .14s; }
+.prod-pro-chip:hover { border-color: var(--prod-accent); color: var(--prod-deep); }
+.prod-pro-chip.on { background: var(--prod-accent); border-color: var(--prod-accent); color: #fff; font-weight: 600; }
+
+/* 人物卡片网格 */
+.prod-talent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 14px; }
+.prod-person-card { background: var(--surface); border: 1px solid var(--prod-line); border-radius: 14px; padding: 16px; box-shadow: var(--shadow); cursor: pointer; transition: transform .15s, box-shadow .15s; position: relative; }
+.prod-person-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); }
+.prod-person-top { display: flex; gap: 13px; align-items: center; }
+.prod-person-meta { min-width: 0; }
+.prod-person-meta .nm { font-family: var(--serif); font-size: 17px; font-weight: 700; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.prod-person-meta .pr { font-size: 12px; color: var(--prod-mid); margin-top: 3px; }
+.prod-person-stat { font-size: 12px; color: var(--ink-faint); margin-top: 11px; border-top: 1px solid var(--line-soft); padding-top: 9px; }
+.prod-person-src { position: absolute; top: 12px; right: 12px; font-size: 10px; color: var(--prod-mid); background: var(--prod-softer); border: 1px solid var(--prod-line); border-radius: 999px; padding: 1px 8px; }
+
+/* 头像 */
+.prod-ava { width: 52px; height: 52px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: var(--prod-softer); border: 1px solid var(--prod-line); }
+.prod-ava.ph { display: grid; place-items: center; font-family: var(--serif); font-size: 22px; color: var(--prod-mid); }
+.prod-ava.big { width: 88px; height: 88px; }
+.prod-ava.big.ph { font-size: 38px; }
+
+/* 量级徽标 */
+.prod-tier { font-size: 11px; font-weight: 600; border-radius: 999px; padding: 1px 10px; font-family: var(--sans); }
+.prod-tier.t-top { background: var(--prod-accent); color: #fff; }
+.prod-tier.t-mid { background: var(--match-soft); color: #7a5a16; }
+.prod-tier.t-new { background: var(--prod-softer); color: var(--prod-mid); border: 1px solid var(--prod-line); }
+.prod-tier-auto { font-size: 11px; color: var(--ink-faint); margin-left: 6px; }
+
+/* 人物档案页 */
+.prod-person-head { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; }
+.prod-person-hmeta { flex: 1; min-width: 220px; }
+.prod-person-hmeta .hn { font-family: var(--serif); font-size: 26px; font-weight: 700; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.prod-person-hmeta .hpr { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.prod-pro-tag { font-size: 12px; background: var(--prod-soft); color: var(--prod-deep); border-radius: 7px; padding: 2px 10px; }
+.prod-person-hmeta .hbio { font-size: 12.5px; color: var(--ink-soft); }
+.prod-person-hmeta .htier-why { font-size: 12px; color: var(--ink-faint); margin-top: 8px; }
+.prod-link-btn { background: none; border: none; color: var(--prod-accent); cursor: pointer; font-size: 12px; text-decoration: underline; text-underline-offset: 2px; font-family: inherit; }
+.prod-person-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-start; margin-left: auto; }
+.prod-person-actions .prod-btn { text-decoration: none; }
+
+/* 我的人脉私人卡片 + 手动录入表单 */
+.prod-contact-card { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+.prod-contact-card label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--ink-faint); flex: 1; min-width: 180px; }
+.prod-contact-card input { padding: 8px 11px; border: 1px solid var(--prod-line); border-radius: 9px; font-family: inherit; font-size: 13px; background: var(--prod-softer); }
+.prod-contact-card input:focus { outline: 2px solid var(--prod-soft); border-color: var(--prod-accent); background: #fff; }
+.prod-mform { display: flex; flex-direction: column; gap: 14px; }
+.prod-mfield { display: flex; flex-direction: column; gap: 6px; }
+.prod-mfield > span { font-size: 12px; color: var(--ink-faint); }
+.prod-mfield > input { padding: 9px 12px; border: 1px solid var(--prod-line); border-radius: 9px; font-family: inherit; font-size: 14px; background: var(--prod-softer); }
+.prod-mfield > input:focus { outline: 2px solid var(--prod-soft); border-color: var(--prod-accent); background: #fff; }
+
+@media (max-width: 880px) {
+  .prod-subnav { top: 62px; }
+  .prod-subnav-inner { padding: 8px 16px; overflow-x: auto; }
+  .prod-subnav-hint { display: none; }
+  .prod-person-actions { margin-left: 0; width: 100%; }
+}

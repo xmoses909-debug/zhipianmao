@@ -8,3 +8,5 @@ backend/data.db
 backend/production.db
 __pycache__/
 *.pyc
+backend/distribution.db
+backend/talent.db

@@ -64,7 +64,11 @@
     seriesTab: "eps",                       // 剧集页子 tab：eps | order | set
     editingAnalysis: false, editBuf: null,
     dirty: { scenes: false, budget: false },
-    job: null, pollTimer: null, progTimer: null
+    job: null, pollTimer: null, progTimer: null,
+    // 制作板块下的两个工具：studio=制片统筹（剧本/分场/预算）；talent=行业人才库
+    section: "studio",
+    talent: { view: "home", sub: "search", filters: { q: "", pro: "", tier: "" },
+              results: null, cur: null, meta: null, loading: false }
   };
 
   function el(id) { return document.getElementById(id); }
@@ -91,10 +95,15 @@
       + '<nav class="prod-modules">'
       + '<button class="prod-module" id="prodNavPlan">策划 · 选题雷达</button>'
       + '<button class="prod-module active">制作 · 制片统筹</button>'
-      + '<button class="prod-module disabled" title="即将上线">发行 <em>即将上线</em></button>'
+      + '<button class="prod-module" id="prodNavDist">发行 · 市场罗盘</button>'
       + '</nav>'
       + '<div class="prod-top-right" id="prodTopRight"></div>'
       + '</div>'
+      + '<div class="prod-subnav"><div class="prod-subnav-inner">'
+      + '<button class="prod-secnav" data-sec="studio">🎬 制片统筹</button>'
+      + '<button class="prod-secnav" data-sec="talent">🎭 行业人才库</button>'
+      + '<span class="prod-subnav-hint" id="prodSubnavHint"></span>'
+      + '</div></div>'
       + '<div class="prod-wrap" id="prodView"></div>'
       + '<div class="prod-loading" id="prodLoading" hidden>'
       + '<div class="prod-loading-card"><div class="prod-hat-pulse">' + HAT + '</div>'
@@ -107,8 +116,32 @@
       + '<div class="prod-toast" id="prodToast"></div>';
     document.body.appendChild(root);
     el("prodNavPlan").onclick = closeProd;   // 切回策划板块（覆盖层一关，底下就是选题雷达）
+    el("prodNavDist").onclick = function () {  // 切到发行板块（此 3 行系发行 context 经帽帽授权代改，2026-06-11）
+      if (closeProd() === false) return;
+      if (window.ZPMDistribution && window.ZPMDistribution.open) window.ZPMDistribution.open();
+    };
     el("prodLoadBg").onclick = function () { el("prodLoading").hidden = true; renderView(); };
+    [].forEach.call(root.querySelectorAll(".prod-secnav"), function (b) {
+      b.onclick = function () { switchSection(b.getAttribute("data-sec")); };
+    });
     S.built = true;
+  }
+
+  function switchSection(sec) {
+    if (sec === S.section) return;
+    if (sec === "studio" && anyDirty() && !confirm("制片统筹里有未保存的修改，确定切走？")) return;
+    S.section = sec;
+    renderView();
+    if (sec === "talent" && !S.talent.results) loadTalentMeta(true);
+  }
+  function highlightSubnav() {
+    [].forEach.call(document.querySelectorAll(".prod-secnav"), function (b) {
+      b.classList.toggle("active", b.getAttribute("data-sec") === S.section);
+    });
+    var hint = el("prodSubnavHint");
+    if (hint) hint.textContent = S.section === "talent"
+      ? "中国影视幕后 · 真实履历（数据来自豆瓣，非 AI 生成）"
+      : "上传剧本 → 解剖 / 分场顺场 / 参考预算";
   }
 
   /* ===== 打开 / 关闭（关闭 = 切到策划板块，不丢任何状态） ===== */
@@ -119,9 +152,10 @@
     refreshProjects(true);
   }
   function closeProd() {
-    if (anyDirty() && !confirm("有还没保存的修改，确定切走？（已保存的不受影响）")) return;
+    if (anyDirty() && !confirm("有还没保存的修改，确定切走？（已保存的不受影响）")) return false;
     el("prodRoot").hidden = true;
     document.body.style.overflow = "";
+    return true;  // 返回布尔：让"切去发行板块"知道用户有没有取消（发行 context 代改，2026-06-11）
   }
   function anyDirty() { return S.dirty.scenes || S.dirty.budget || S.editingAnalysis; }
 
@@ -195,6 +229,8 @@
   function renderView() {
     var tr = el("prodTopRight");
     tr.textContent = token() ? "已登录 · 项目存云端" : "未登录 · 项目绑定本设备";
+    highlightSubnav();
+    if (S.section === "talent") return renderTalent();
     if (S.view === "project" && S.cur) renderProject();
     else if (S.view === "series" && S.curSeries) renderSeries();
     else renderHome();
@@ -1138,6 +1174,346 @@
         if (j.ok) cb();
         else toast(j.error || "保存失败", true);
       }).catch(function () { toast("保存失败：没连上后端", true); });
+  }
+
+  /* =====================================================================
+     行业人才库（制作板块第二个工具）
+     数据全部来自豆瓣真实接口（作品/工种/获奖），零 AI 编造；头腰部用真实信号算。
+     ===================================================================== */
+  var T = S.talent;
+  function tApi(path, opts) { return api("/api/production/talent" + path, opts); }
+  function tierClass(t) { return t === "头部" ? "t-top" : (t === "腰部" ? "t-mid" : "t-new"); }
+  function avatarHTML(p, big) {
+    var cls = "prod-ava" + (big ? " big" : "");
+    if (p.avatar) return '<img class="' + cls + '" src="' + esc(p.avatar) + '" alt="" referrerpolicy="no-referrer" '
+      + 'onerror="this.style.display=&quot;none&quot;;this.nextSibling.style.display=&quot;grid&quot;" />'
+      + '<span class="' + cls + ' ph" style="display:none">' + esc((p.name || "?").charAt(0)) + '</span>';
+    return '<span class="' + cls + ' ph">' + esc((p.name || "?").charAt(0)) + '</span>';
+  }
+
+  function loadTalentMeta(thenSearch) {
+    tApi("/meta").then(function (j) {
+      if (j && j.ok) T.meta = j;
+      var cn = el("tCount");
+      if (cn && T.meta) cn.textContent = "库内 " + T.meta.count + " 人"
+        + (T.meta.crawl && T.meta.crawl.busy ? "（正在自动补充…）" : "");
+      if (thenSearch) doTalentSearch();
+      else renderView();
+    }).catch(function () { if (thenSearch) doTalentSearch(); });
+  }
+
+  function renderTalent() {
+    if (T.view === "person" && T.cur) return renderPersonProfile();
+    if (T.view === "add") return renderAddDouban();
+    if (T.view === "manual") return renderManual();
+    return renderTalentHome();
+  }
+
+  function renderTalentHome() {
+    var v = el("prodView");
+    var pros = (T.meta && T.meta.professions) || ["导演", "编剧", "摄影", "美术", "造型", "录音", "剪辑", "作曲", "制片人", "演员"];
+    var count = (T.meta && T.meta.count) || 0;
+    var h = '<div class="prod-head"><div><h1>行业人才库</h1>'
+      + '<p class="prod-sub">中国影视幕后 & 演职人员真实履历——按工种、量级找人。数据来自豆瓣公开资料，<b>非 AI 生成</b>，可点开核实。</p></div>'
+      + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+      + '<button class="prod-btn" id="tAddDouban">➕ 按豆瓣链接添加</button>'
+      + '<button class="prod-btn minor" id="tManual">✍️ 手动录入</button>'
+      + '</div></div>';
+    // 子页：搜索 / 我的人脉
+    h += '<div class="prod-subtabs">'
+      + '<button class="prod-subtab' + (T.sub === "search" ? " active" : "") + '" data-tsub="search">🔍 搜索人才</button>'
+      + '<button class="prod-subtab' + (T.sub === "network" ? " active" : "") + '" data-tsub="network">📇 我的人脉</button>'
+      + '<span id="tCount" style="margin-left:auto;font-size:12px;color:var(--ink-faint);align-self:center">' + (T.meta ? "库内 " + count + " 人" : "载入中…") + '</span>'
+      + '</div>';
+    if (T.sub === "search") {
+      h += '<div class="prod-panel" style="padding:18px 20px">'
+        + '<div class="prod-talent-search">'
+        + '<input type="search" id="tSearchBox" class="prod-tsearch" placeholder="搜姓名…（如 邸琨）" value="' + esc(T.filters.q) + '" />'
+        + '<select id="tTier" class="prod-tselect"><option value="">全部量级</option>'
+        + ["头部", "腰部", "新锐"].map(function (x) { return '<option' + (T.filters.tier === x ? " selected" : "") + '>' + x + '</option>'; }).join("")
+        + '</select></div>'
+        + '<div class="prod-pro-chips"><span class="prod-pro-chip' + (!T.filters.pro ? " on" : "") + '" data-pro="">全部工种</span>'
+        + pros.map(function (p) { return '<span class="prod-pro-chip' + (T.filters.pro === p ? " on" : "") + '" data-pro="' + p + '">' + p + '</span>'; }).join("")
+        + '</div></div>';
+    } else {
+      h += '<div class="prod-note-strip" style="margin:0 0 14px">📇 你收进人脉的人（含手动录入的私人新人脉）。点开可记私人联系方式/备注，只有你自己看得到。</div>';
+    }
+    h += '<div id="tResults"></div>';
+    v.innerHTML = h;
+    el("tAddDouban").onclick = function () { T.view = "add"; renderView(); };
+    el("tManual").onclick = function () { T.view = "manual"; renderView(); };
+    [].forEach.call(v.querySelectorAll(".prod-subtab"), function (b) {
+      b.onclick = function () { T.sub = b.getAttribute("data-tsub"); T.view = "home"; renderView(); if (T.sub === "network") loadNetwork(); else doTalentSearch(); };
+    });
+    if (T.sub === "search") {
+      var box = el("tSearchBox"), tmr = null;
+      box.oninput = function () { T.filters.q = box.value; if (tmr) clearTimeout(tmr); tmr = setTimeout(doTalentSearch, 350); };
+      el("tTier").onchange = function () { T.filters.tier = el("tTier").value; doTalentSearch(); };
+      [].forEach.call(v.querySelectorAll(".prod-pro-chip"), function (c) {
+        c.onclick = function () { T.filters.pro = c.getAttribute("data-pro"); renderTalentHome(); doTalentSearch(); };
+      });
+      renderTalentResults(T.results);
+    } else {
+      loadNetwork();
+    }
+  }
+
+  function doTalentSearch() {
+    var box = el("tResults");
+    if (box) box.innerHTML = '<div class="prod-empty" style="padding:30px"><p>检索中…</p></div>';
+    var qs = "?q=" + encodeURIComponent(T.filters.q) + "&pro=" + encodeURIComponent(T.filters.pro) + "&tier=" + encodeURIComponent(T.filters.tier);
+    tApi("/search" + qs).then(function (j) {
+      T.results = (j && j.people) || [];
+      if (T.sub === "search") renderTalentResults(T.results);
+    }).catch(function () { if (box) box.innerHTML = '<div class="prod-empty"><p>没连上后端</p></div>'; });
+  }
+  function loadNetwork() {
+    var box = el("tResults");
+    if (box) box.innerHTML = '<div class="prod-empty" style="padding:30px"><p>加载中…</p></div>';
+    tApi("/network").then(function (j) { renderTalentResults((j && j.people) || [], true); })
+      .catch(function () { if (box) box.innerHTML = '<div class="prod-empty"><p>没连上后端</p></div>'; });
+  }
+
+  function renderTalentResults(people, isNetwork) {
+    var box = el("tResults");
+    if (!box) return;
+    if (!people || !people.length) {
+      box.innerHTML = '<div class="prod-empty"><span class="big">' + (isNetwork ? "📇" : "🔍") + '</span>'
+        + '<h3>' + (isNetwork ? "人脉库还是空的" : "没找到匹配的人") + '</h3>'
+        + '<p>' + (isNetwork ? "在搜索结果里点「加入人脉」，或用「手动录入」把你认识的人记进来。"
+          : "换个工种/量级试试；想要的人不在库里？用右上角「按豆瓣链接添加」把他抓进来。") + '</p></div>';
+      return;
+    }
+    box.innerHTML = '<div class="prod-talent-grid">' + people.map(personCard).join("") + '</div>';
+    [].forEach.call(box.querySelectorAll(".prod-person-card"), function (c) {
+      c.onclick = function () { openPerson(c.getAttribute("data-id")); };
+    });
+  }
+
+  function personCard(p) {
+    var pros = (p.professions || []).slice(0, 4).join(" · ") || "—";
+    var stat = p.workCount ? (p.workCount + " 部作品" + (p.topCount ? " · " + p.topCount + " 部≥8分" : "")) : "暂无作品数据";
+    return '<div class="prod-person-card" data-id="' + p.id + '">'
+      + '<div class="prod-person-top">' + avatarHTML(p)
+      + '<div class="prod-person-meta"><div class="nm">' + esc(p.name) + '<span class="prod-tier ' + tierClass(p.tier) + '">' + esc(p.tier) + '</span></div>'
+      + '<div class="pr">' + esc(pros) + '</div></div></div>'
+      + '<div class="prod-person-stat">' + esc(stat) + (p.lastYear ? ' · 近作 ' + p.lastYear : "") + '</div>'
+      + (p.source === "manual" ? '<div class="prod-person-src">手动录入</div>' : '') + '</div>';
+  }
+
+  function openPerson(id) {
+    var box = el("tResults") || el("prodView");
+    tApi("/person?id=" + encodeURIComponent(id)).then(function (j) {
+      if (!j.ok) return toast(j.error || "打开失败", true);
+      T.cur = j.person; T.view = "person"; renderView();
+    }).catch(function () { toast("网络出错", true); });
+  }
+
+  function renderPersonProfile() {
+    var p = T.cur, v = el("prodView");
+    var tier = p.tier, why = [];
+    if (p.workCount) why.push(p.workCount + " 部作品");
+    if (p.topCount) why.push(p.topCount + " 部豆瓣≥8.0");
+    else if (p.goodCount) why.push(p.goodCount + " 部≥7.0");
+    if (p.lastYear) why.push("近作 " + p.lastYear);
+    var bio = [p.gender, p.birthday, p.birthplace].filter(Boolean).join(" · ");
+    var h = '<div class="prod-crumb"><a id="tBack">🎭 行业人才库</a> / ' + esc(p.name) + '</div>';
+    h += '<div class="prod-person-head">'
+      + avatarHTML(p, true)
+      + '<div class="prod-person-hmeta"><div class="hn">' + esc(p.name)
+      + '<span class="prod-tier ' + tierClass(tier) + '">' + esc(tier) + '</span>'
+      + (p.tier && p.tierAuto && p.tier !== p.tierAuto ? '<span class="prod-tier-auto">（自动估：' + esc(p.tierAuto) + '）</span>' : '') + '</div>'
+      + '<div class="hpr">' + (p.professions || []).map(function (x) { return '<span class="prod-pro-tag">' + esc(x) + '</span>'; }).join("") + '</div>'
+      + (bio ? '<div class="hbio">' + esc(bio) + '</div>' : '')
+      + '<div class="htier-why">量级依据：' + (why.join("、") || "数据较少") + '　<button class="prod-link-btn" id="tSetTier">改定级</button></div>'
+      + '</div>'
+      + '<div class="prod-person-actions">'
+      + (p.inNetwork ? '<button class="prod-btn save-hot" id="tNet">✓ 已在人脉 · 记联系方式</button>'
+        : '<button class="prod-btn" id="tNet">➕ 加入我的人脉</button>')
+      + (p.doubanUrl ? '<a class="prod-btn minor" href="' + esc(p.doubanUrl) + '" target="_blank" rel="noopener">豆瓣主页 ↗</a>' : '')
+      + (p.doubanId ? '<button class="prod-btn minor" id="tRefresh">↻ 刷新履历</button>' : '')
+      + '<button class="prod-btn danger" id="tDel">删除</button>'
+      + '</div></div>';
+    h += '<div class="prod-note-strip" style="margin:14px 0">数据来自豆瓣公开资料，制片帽不对其准确性背书——重要决策请以豆瓣主页/本人核实为准。</div>';
+
+    if (p.inNetwork || p.myContact || p.myNote) {
+      h += '<div class="prod-panel" style="margin-bottom:16px"><div class="prod-sec" style="margin-top:0"><h4>📇 我的人脉卡片（仅你可见）</h4>'
+        + '<div class="prod-contact-card">'
+        + '<label>联系方式<input type="text" id="tContact" value="' + esc(p.myContact || "") + '" placeholder="微信 / 电话 / 经纪人…" /></label>'
+        + '<label>私人备注<input type="text" id="tCNote" value="' + esc(p.myNote || "") + '" placeholder="如：合作过《XX》，靠谱，报价中等" /></label>'
+        + '<button class="prod-btn save-hot" id="tCSave">保存</button>'
+        + '</div></div></div>';
+    }
+
+    // 获奖
+    if (p.awards && p.awards.length) {
+      h += '<div class="prod-panel" style="margin-bottom:16px"><div class="prod-sec" style="margin-top:0"><h4>🏆 获奖履历（' + p.awards.length + '）</h4>'
+        + '<ul class="prod-list">' + p.awards.slice(0, 40).map(awardLine).join("") + '</ul></div></div>';
+    }
+
+    // 作品年表
+    var works = (p.works || []).slice();
+    h += '<div class="prod-panel"><div class="prod-sec" style="margin-top:0"><h4>🎬 作品年表（' + works.length + '）</h4>';
+    if (!works.length) h += '<p style="color:var(--ink-faint)">暂无作品数据。</p>';
+    else {
+      h += '<div class="prod-table-scroll"><table class="prod-scenes" style="min-width:680px"><tr><th>年份</th><th>作品</th><th>担任</th><th>豆瓣分</th><th>导演</th></tr>'
+        + works.map(function (w) {
+          return '<tr><td class="c-no">' + esc(w.year || "—") + '</td>'
+            + '<td style="min-width:160px;font-weight:600">' + (w.url ? '<a href="' + esc(w.url) + '" target="_blank" rel="noopener" style="color:inherit">' + esc(w.title) + '</a>' : esc(w.title)) + '</td>'
+            + '<td style="color:var(--prod-deep)">' + esc(w.role || "—") + '</td>'
+            + '<td>' + (w.rating ? '<b style="color:#b3852e">' + w.rating + '</b>' : '<span style="color:var(--ink-faint)">—</span>') + '</td>'
+            + '<td style="color:var(--ink-soft)">' + esc((w.directors || []).join("、")) + '</td></tr>';
+        }).join("") + '</table></div>';
+    }
+    h += '</div>';
+    v.innerHTML = h;
+
+    el("tBack").onclick = function () { T.view = "home"; renderView(); if (T.sub === "network") loadNetwork(); else doTalentSearch(); };
+    el("tNet").onclick = function () {
+      if (!token()) return toast("登录后才能存到「我的人脉」（私人联系方式需绑定账号）", true);
+      if (p.inNetwork) { var c = el("tContact"); if (c) c.focus(); return; }
+      tApi("/contact", { method: "POST", body: { id: p.id, contact: "", note: "" } }).then(function (j) {
+        if (j.ok) { toast("✓ 已加入我的人脉"); openPerson(p.id); } else toast(j.error || "失败", true);
+      });
+    };
+    var rf = el("tRefresh");
+    if (rf) rf.onclick = function () {
+      toast("正在从豆瓣刷新…");
+      tApi("/refresh", { method: "POST", body: { id: p.id } }).then(function (j) {
+        if (j.ok) { T.cur = j.person; renderView(); toast("✓ 已刷新"); } else toast(j.error || "刷新失败", true);
+      });
+    };
+    el("tDel").onclick = function () {
+      if (!confirm("从人才库删除「" + p.name + "」？")) return;
+      tApi("/delete", { method: "POST", body: { id: p.id } }).then(function () {
+        toast("已删除"); T.view = "home"; renderView(); T.meta = null; loadTalentMeta(false);
+        if (T.sub === "network") loadNetwork(); else doTalentSearch();
+      });
+    };
+    el("tSetTier").onclick = function () {
+      var nt = prompt("手动定级（头部 / 腰部 / 新锐；留空=用自动估算 " + p.tierAuto + "）：", p.tier === p.tierAuto ? "" : p.tier);
+      if (nt === null) return;
+      nt = nt.trim();
+      if (nt && ["头部", "腰部", "新锐"].indexOf(nt) < 0) return toast("只能填 头部 / 腰部 / 新锐", true);
+      tApi("/set_tier", { method: "POST", body: { id: p.id, tier: nt } }).then(function () { openPerson(p.id); toast("✓ 已更新定级"); });
+    };
+    var cs = el("tCSave");
+    if (cs) cs.onclick = function () {
+      tApi("/contact", { method: "POST", body: { id: p.id, contact: el("tContact").value, note: el("tCNote").value } })
+        .then(function (j) { if (j.ok) toast("✓ 已保存到我的人脉"); else toast(j.error || "失败", true); });
+    };
+  }
+
+  function awardLine(a) {
+    // 获奖结构豆瓣不固定，尽量从常见字段拼一行
+    if (typeof a === "string") return "<li>" + esc(a) + "</li>";
+    var year = a.year || "";
+    var fest = a.festival || a.title || a.name || "";
+    var items = [];
+    (a.modules || a.awards || []).forEach(function (m) {
+      var aw = m.award || m.name || m.title || "";
+      if (aw) items.push(aw);
+    });
+    var line = [year, fest].filter(Boolean).join(" ");
+    if (items.length) line += "：" + items.join("、");
+    if (!line) line = esc(JSON.stringify(a)).slice(0, 80);
+    return "<li>" + esc(line) + "</li>";
+  }
+
+  function renderAddDouban() {
+    var v = el("prodView");
+    v.innerHTML = '<div class="prod-crumb"><a id="tBack">🎭 行业人才库</a> / 按豆瓣链接添加</div>'
+      + '<div class="prod-panel" style="max-width:620px">'
+      + '<h2 style="font-family:var(--serif);font-size:22px;margin-bottom:6px">按豆瓣链接添加人物</h2>'
+      + '<p style="font-size:13px;color:var(--ink-soft);line-height:1.8;margin-bottom:16px">'
+      + '在豆瓣找到这个人的页面（影人页），把链接贴进来——制片帽会抓他的<b>真实作品年表、每部担任的工种、获奖履历</b>入库。<br>'
+      + '认识了一位美术/摄影想存档？这是最准的方式。</p>'
+      + '<input type="text" id="tDoubanInput" class="prod-tsearch" style="width:100%;margin-bottom:6px" '
+      + 'placeholder="例：https://movie.douban.com/celebrity/1350703/  或直接贴 id" />'
+      + '<p style="font-size:11.5px;color:var(--ink-faint);margin-bottom:16px">提示：豆瓣搜人名 → 点进 TA 的页面 → 复制地址栏链接。支持 /celebrity/ 链接最稳。</p>'
+      + '<div style="display:flex;gap:10px"><button class="prod-btn" id="tDoFetch">抓取并入库 →</button>'
+      + '<button class="prod-btn minor" id="tCancel">取消</button></div>'
+      + '<div id="tFetchMsg" style="margin-top:14px;font-size:13px"></div>'
+      + '</div>';
+    el("tBack").onclick = el("tCancel").onclick = function () { T.view = "home"; renderView(); };
+    el("tDoFetch").onclick = function () {
+      var input = el("tDoubanInput").value.trim();
+      if (!input) return toast("先贴个链接或 id", true);
+      var btn = el("tDoFetch"); btn.disabled = true; btn.textContent = "抓取中（约 5-10 秒）…";
+      el("tFetchMsg").innerHTML = '<span style="color:var(--ink-faint)">正在从豆瓣抓取作品年表与获奖履历…</span>';
+      tApi("/add_douban", { method: "POST", body: { input: input } }).then(function (j) {
+        btn.disabled = false; btn.textContent = "抓取并入库 →";
+        if (!j.ok) { el("tFetchMsg").innerHTML = '<span style="color:#b0492e">✗ ' + esc(j.error) + '</span>'; return; }
+        T.meta = null; loadTalentMeta(false);
+        toast("✓ 已入库：" + j.person.name);
+        T.cur = j.person; T.view = "person"; renderView();
+      }).catch(function () { btn.disabled = false; btn.textContent = "抓取并入库 →"; el("tFetchMsg").innerHTML = '<span style="color:#b0492e">✗ 没连上后端</span>'; });
+    };
+  }
+
+  function renderManual() {
+    var v = el("prodView");
+    T._manualWorks = T._manualWorks || [{ title: "", year: "", role: "" }];
+    var proOpts = (T.meta && T.meta.professions) || ["导演", "编剧", "摄影", "美术", "造型", "录音", "剪辑", "作曲", "制片人", "演员"];
+    var h = '<div class="prod-crumb"><a id="tBack">🎭 行业人才库</a> / 手动录入</div>'
+      + '<div class="prod-panel" style="max-width:680px">'
+      + '<h2 style="font-family:var(--serif);font-size:22px;margin-bottom:6px">手动录入人物</h2>'
+      + '<p style="font-size:13px;color:var(--ink-soft);line-height:1.8;margin-bottom:18px">不在豆瓣上的新人，或你私下认识的人——手动建档，存进你自己的人脉库（默认仅你可见）。</p>'
+      + '<div class="prod-mform">'
+      + '<label class="prod-mfield"><span>姓名 *</span><input type="text" id="mName" placeholder="如 邸琨" /></label>'
+      + '<div class="prod-mfield"><span>工种（可多选）</span><div class="prod-pro-chips" id="mPros">'
+      + proOpts.map(function (x) { return '<span class="prod-pro-chip" data-mp="' + x + '">' + x + '</span>'; }).join("") + '</div></div>'
+      + '<label class="prod-mfield"><span>联系方式（仅你可见）</span><input type="text" id="mContact" placeholder="微信 / 电话 / 经纪人" /></label>'
+      + '<label class="prod-mfield"><span>备注</span><input type="text" id="mNote" placeholder="如：合作过《XX》，靠谱，报价中等" /></label>'
+      + '<div class="prod-mfield"><span>代表作品</span><div id="mWorks"></div>'
+      + '<button class="prod-row-add" id="mAddWork">+ 加一部作品</button></div>'
+      + '</div>'
+      + '<div style="display:flex;gap:10px;margin-top:18px"><button class="prod-btn" id="mSave">建档入库 →</button>'
+      + '<button class="prod-btn minor" id="mCancel">取消</button></div></div>';
+    v.innerHTML = h;
+    var mp = [];
+    renderManualWorks();
+    el("tBack").onclick = el("mCancel").onclick = function () { T._manualWorks = null; T.view = "home"; renderView(); };
+    [].forEach.call(v.querySelectorAll("#mPros .prod-pro-chip"), function (c) {
+      c.onclick = function () {
+        var p = c.getAttribute("data-mp"), i = mp.indexOf(p);
+        if (i > -1) { mp.splice(i, 1); c.classList.remove("on"); } else { mp.push(p); c.classList.add("on"); }
+      };
+    });
+    el("mAddWork").onclick = function () { T._manualWorks.push({ title: "", year: "", role: "" }); renderManualWorks(); };
+    el("mSave").onclick = function () {
+      var name = el("mName").value.trim();
+      if (!name) return toast("起码填个名字", true);
+      collectManualWorks();
+      tApi("/manual", { method: "POST", body: {
+        name: name, professions: mp, contact: el("mContact").value, note: el("mNote").value,
+        works: T._manualWorks.filter(function (w) { return w.title.trim(); }), private: true
+      } }).then(function (j) {
+        if (!j.ok) return toast(j.error || "录入失败", true);
+        T._manualWorks = null; T.meta = null; loadTalentMeta(false);
+        toast("✓ 已建档：" + j.person.name);
+        T.cur = j.person; T.view = "person"; renderView();
+      }).catch(function () { toast("没连上后端", true); });
+    };
+
+    function renderManualWorks() {
+      var box = el("mWorks");
+      box.innerHTML = T._manualWorks.map(function (w, i) {
+        return '<div class="prod-edit-row" style="margin-bottom:6px">'
+          + '<input type="text" class="prod-edit-field" style="flex:0 0 80px" data-mwk="year" data-i="' + i + '" placeholder="年份" value="' + esc(w.year) + '" />'
+          + '<input type="text" class="prod-edit-field" data-mwk="title" data-i="' + i + '" placeholder="作品名" value="' + esc(w.title) + '" />'
+          + '<input type="text" class="prod-edit-field" style="flex:0 0 110px" data-mwk="role" data-i="' + i + '" placeholder="担任工种" value="' + esc(w.role) + '" />'
+          + (T._manualWorks.length > 1 ? '<button class="prod-row-del" data-mwdel="' + i + '">×</button>' : '') + '</div>';
+      }).join("");
+      [].forEach.call(box.querySelectorAll("[data-mwdel]"), function (b) {
+        b.onclick = function () { collectManualWorks(); T._manualWorks.splice(+b.getAttribute("data-mwdel"), 1); renderManualWorks(); };
+      });
+    }
+    function collectManualWorks() {
+      [].forEach.call(el("mWorks").querySelectorAll("[data-mwk]"), function (inp) {
+        T._manualWorks[+inp.getAttribute("data-i")][inp.getAttribute("data-mwk")] = inp.value;
+      });
+    }
   }
 
   /* ===================================================== 入口接管 */

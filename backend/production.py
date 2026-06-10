@@ -747,9 +747,14 @@ def _qs(path):
 
 
 def handle(handler, method, path):
-    """server.py 的唯一入口：/api/production/* 全部进这里。"""
+    """server.py 的唯一入口：/api/production/* 全部进这里。
+    人才库（行业人才数据库）是制作板块下的第二个工具，走 /api/production/talent/* 子路由——
+    这样 server.py 不必新增钩子（互不干扰：和发行板块那个并行 context 零交叉）。"""
     init()
     try:
+        if path.split("?")[0].startswith("/api/production/talent"):
+            import talent  # 制作 context 专属：行业人才库（豆瓣真实数据，零 AI 编造）
+            return talent.handle(handler, method, path)
         return _route(handler, method, path)
     except Exception as e:
         return handler._json({"ok": False, "error": "制作板块内部错误：%s" % e}, 500)

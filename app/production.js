@@ -9,8 +9,8 @@
   "use strict";
 
   /* ===== 小工具 ===== */
-  var HAT = '<svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">'
-    + '<path d="M12 39 C 9 25, 31 14, 45 23 C 51 27, 52 34, 50 39"/><path d="M12 39 L 50 39"/><path d="M12 39 C 5 40, 7 45, 17 44"/></svg>';
+  /* 帽帽提供的报童帽原图的墨绿版（app/logo-green.png，由策划 context 统一生成维护；全板块同帽、各板块各色） */
+  var HAT = '<img src="logo-green.png" alt="制片帽" style="display:block">';
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
   function fmtWan(n) { n = n || 0; return n >= 10000 ? (n / 10000).toFixed(1).replace(/\.0$/, "") + " 万字" : n + " 字"; }
   function fmtDate(ts) {

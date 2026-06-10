@@ -4,9 +4,8 @@
   var DATA = window.MAOZHIPIAN;
   if (!DATA) { document.body.innerHTML = "<p style='padding:40px'>数据未加载。</p>"; return; }
 
-  /* 简笔画鸭舌帽 logo（currentColor 控制颜色） */
-  var HAT = '<svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">'
-    + '<path d="M12 39 C 9 25, 31 14, 45 23 C 51 27, 52 34, 50 39"/><path d="M12 39 L 50 39"/><path d="M12 39 C 5 40, 7 45, 17 44"/></svg>';
+  /* 报童帽 logo —— 直接用帽帽提供的原图（app/logo.png，透明底像素原样；尺寸由各容器 CSS 控制） */
+  var HAT = '<img src="logo.png" alt="制片帽" style="display:block">';
 
   // 标签按 4 大类归组（时代 / 类型 / 题材 / 调性），不再是一堆乱标签
   var PALETTE_GROUPS = [

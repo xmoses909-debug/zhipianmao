@@ -31,11 +31,12 @@
 }
 .prod-brand { display: flex; align-items: center; gap: 13px; }
 .prod-brand .prod-hat {
-  width: 40px; height: 40px; border-radius: 11px; color: #fff;
-  background: var(--prod-grad);
+  width: 40px; height: 40px; border-radius: 11px; color: var(--prod-accent);
+  background: var(--paper); border: 1px solid var(--prod-line);  /* 米色底+墨绿线帽：全板块同帽各色（帽帽定 2026-06-10，策划 context 代改此块） */
   display: grid; place-items: center; box-shadow: var(--shadow-sm); flex-shrink: 0;
 }
 .prod-brand .prod-hat svg { width: 26px; height: 26px; }
+.prod-brand .prod-hat img { width: 30px; height: 30px; object-fit: contain; }
 .prod-brand-text { display: flex; flex-direction: column; line-height: 1.25; }
 .prod-brand-text strong { font-family: var(--serif); font-size: 18px; letter-spacing: .5px; }
 .prod-brand-text span { font-size: 11.5px; color: var(--prod-mid); }
@@ -290,6 +291,7 @@
 .prod-loading-card { background: var(--surface); border: 1px solid var(--prod-line); border-radius: 22px; box-shadow: var(--shadow-lg); padding: 36px 34px 28px; width: 100%; max-width: 460px; text-align: center; }
 .prod-loading-card .prod-hat-pulse { width: 58px; height: 58px; margin: 0 auto 14px; color: var(--prod-accent); animation: prodPulse 1.6s ease-in-out infinite; }
 .prod-loading-card .prod-hat-pulse svg { width: 100%; height: 100%; }
+.prod-loading-card .prod-hat-pulse img { width: 100%; height: 100%; object-fit: contain; }
 @keyframes prodPulse { 0%, 100% { transform: translateY(0); opacity: 1; } 50% { transform: translateY(-6px); opacity: .65; } }
 .prod-loading-card h3 { font-family: var(--serif); font-size: 21px; margin-bottom: 20px; letter-spacing: 1px; }
 .prod-prog-track { height: 11px; background: var(--prod-softer); border: 1px solid var(--prod-line); border-radius: 999px; overflow: hidden; }

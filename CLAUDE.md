@@ -52,7 +52,9 @@
 │   ├── data/recommendations.js  静态演示数据（线上无后端时显示的那批）
 │   ├── manifest.json        PWA 配置（"添加到主屏幕"、出 APK 用）
 │   ├── sw.js                Service Worker —— 当前暂停（见架构决策）
-│   ├── icon-192/512.png     App 图标（赤陶底 + 鸭舌帽 logo）
+│   ├── logo.png             品牌 logo：帽帽提供的 one-line 报童帽**原图**（酒红线条、透明底；2026-06-10 换。⚠️ 帽帽明确要求用原图，别用代码重绘）
+│   ├── logo-green.png       同一原图的墨绿版（#44594e，canvas 整体换色），制作板块用——**全板块同帽、各板块各色，角标=米色底小方块**
+│   ├── icon-192/512.png     App 图标（米白底 + 帽帽的报童帽原图）
 │   └── fonts/               造字工房字体（xinjianhei/junya/shuyan.otf）
 ├── backend/                 本地 AI 后端（不部署到线上）
 │   ├── server.py            后端：服务 app/ + /api/discover（组候选池→调 DeepSeek 选片）+ 制作板块转发钩子 5 行
@@ -210,7 +212,7 @@
 | `styles.css` | 共享（策划为主） | 制作板块零规则依赖；但 **CSS 变量名**（--paper/--surface/--accent/--story 等）被 production.css 引用，改名需同步 |
 | `production.db` | 制作板块数据 | 与 data.db 同目录（服务器在 /var/lib/zhipianmao/），git 已忽略；表结构改动只通过 production.py 的 init() 幂等建表 |
 
-**跨板块接缝（改名必须两边同步）**：① server.py Handler 的 `_json/_body/_token` 三个方法被 production.py 调用；② db.py 的 `user_by_token()`；③ localStorage 的登录令牌 key `maozhipian.token`（production.js 只读不写）；④ `.modules .module` 里文本含"制作"的按钮是入口挂载点。
+**跨板块接缝（改名必须两边同步）**：① server.py Handler 的 `_json/_body/_token` 三个方法被 production.py 调用；② db.py 的 `user_by_token()`；③ localStorage 的登录令牌 key `maozhipian.token`（production.js 只读不写）；④ `.modules .module` 里文本含"制作"的按钮是入口挂载点；⑤ **logo 约定（帽帽定 2026-06-10）**：全板块用帽帽提供的同一顶报童帽原图、各板块各色、角标=米色底（`var(--paper)`）小方块——策划 `logo.png`(酒红)、制作 `logo-green.png`(墨绿 #44594e)，文件由策划 context 生成维护；production.js 的 `HAT` 行 + production.css 的 `.prod-hat` 底色/img 尺寸这几行是策划 context 经帽帽授权代改的（制作 context 改这两处时知会一声即可）。
 
 ### 9.3 数据与账号
 - 项目归属 `owner`：登录用户 = `u:<id>`（复用策划板块的真账号体系）；未登录 = `d:<设备号>`（production.js 自动生成存 localStorage `zpm.prod.device`）。

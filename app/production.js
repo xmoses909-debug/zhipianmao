@@ -87,7 +87,7 @@
     root.innerHTML =
       '<div class="prod-topbar">'
       + '<div class="prod-brand"><span class="prod-hat">' + HAT + '</span>'
-      + '<div class="prod-brand-text"><strong>制片帽</strong><span>制作 · 制片统筹</span></div></div>'
+      + '<div class="prod-brand-text"><strong>制片帽</strong><span>制片统筹</span></div></div>'
       + '<nav class="prod-modules">'
       + '<button class="prod-module" id="prodNavPlan">策划 · 选题雷达</button>'
       + '<button class="prod-module active">制作 · 制片统筹</button>'

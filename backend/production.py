@@ -31,6 +31,7 @@ import urllib.error
 from xml.etree import ElementTree
 
 import db as account_db  # 只用它的 user_by_token：复用选题雷达的真账号会话（只读，不动它的表）
+import pdftext           # 制作板块专属：纯标准库 PDF 文本提取
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 # 数据库放哪：优先 ZPM_PROD_DB 指定；否则放进 ZPM_DB 同目录（服务器上即 /var/lib/zhipianmao/，持久盘）
@@ -82,16 +83,31 @@ def init():
             analysis    TEXT,               -- JSON：剧本解剖结果（用户可改后存回）
             scenes      TEXT,               -- JSON：分场表（用户可改后存回）
             budget      TEXT,               -- JSON：预算表（用户可改后存回）
+            series_id   TEXT,               -- 属于哪个剧集组（多集剧；单本为 NULL）
+            episode     INTEGER,            -- 第几集（剧集组内排序用）
+            created     REAL, updated REAL
+        );
+        CREATE TABLE IF NOT EXISTS series(
+            id          TEXT PRIMARY KEY,
+            owner       TEXT NOT NULL,
+            title       TEXT,
             created     REAL, updated REAL
         );
         CREATE TABLE IF NOT EXISTS jobs(
             id          TEXT PRIMARY KEY,
-            project_id  TEXT, kind TEXT,    -- analysis | scenes | budget
+            project_id  TEXT, kind TEXT,    -- analysis | scenes | budget | series_scenes
             status      TEXT,               -- running | done | error
             progress    REAL, message TEXT, error TEXT,
             created     REAL, updated REAL
         );
         """)
+        # 老库平滑升级：v1 的 projects 表没有 series 两列，补上（幂等，已有就略过）
+        for ddl in ("ALTER TABLE projects ADD COLUMN series_id TEXT",
+                    "ALTER TABLE projects ADD COLUMN episode INTEGER"):
+            try:
+                c.execute(ddl)
+            except sqlite3.OperationalError:
+                pass
     _init_done = True
 
 
@@ -164,12 +180,14 @@ def parse_script_file(filename, raw):
             text = _docx_to_text(raw)
         elif name.endswith(".fdx"):
             text = _fdx_to_text(raw)
+        elif name.endswith(".pdf"):
+            text = pdftext.extract_text(raw)
         elif name.endswith(".doc"):
             return None, "老版 .doc 格式解析不了——请在 Word 里另存为 .docx 或 .txt 再传"
-        elif name.endswith(".pdf"):
-            return None, "PDF 暂不支持——请用 Word/记事本 打开后另存为 .docx 或 .txt 再传"
         else:  # .txt / .md / 无后缀，按纯文本
             text = _decode_text(raw)
+    except pdftext.PDFTextError as e:
+        return None, str(e)
     except Exception as e:
         return None, "文件解析失败（%s）——换成 .txt 或 .docx 试试" % e.__class__.__name__
     text = re.sub(r"\r\n?", "\n", text or "").strip()
@@ -178,6 +196,92 @@ def parse_script_file(filename, raw):
     if len(text) > MAX_SCRIPT_CHARS:
         return None, "剧本超过 %d 万字——请按集/按部分拆开上传" % (MAX_SCRIPT_CHARS // 10000)
     return text, None
+
+
+# ============================================================ 多集剧：ZIP 解包 + 按集切分
+_EP_PATTERNS = [
+    re.compile(r"^\s*第\s*([0-9一二三四五六七八九十百零]+)\s*集"),
+    re.compile(r"^\s*(?:EP|ep|Ep)\s*\.?\s*(\d+)"),
+    re.compile(r"^\s*(?:Episode|EPISODE)\s+(\d+)"),
+    re.compile(r"^\s*(\d+)\s*集\b"),
+]
+
+
+def _cn_num(s):
+    """中文数字转整数（一二十/二十六这类，剧集集数够用）。"""
+    if s.isdigit():
+        return int(s)
+    digits = {"零": 0, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+    if s == "十":
+        return 10
+    n, tmp = 0, 0
+    for ch in s:
+        if ch in digits:
+            tmp = digits[ch]
+        elif ch == "十":
+            n += (tmp or 1) * 10
+            tmp = 0
+        elif ch == "百":
+            n += (tmp or 1) * 100
+            tmp = 0
+    return n + tmp
+
+
+def split_episodes(text):
+    """单个文件里含多集（"第1集/第2集…"分章）→ 切成 [(集号, 集文本)]；识别不到 2 集以上返回 None。
+    为什么切：26 集连续剧一个文件几十万字，整本喂模型必断档；一集一个项目，各拆各的，最后再汇总。"""
+    lines = text.split("\n")
+    best_pat, best_hits = None, []
+    for pat in _EP_PATTERNS:
+        hits = [(i, m) for i, ln in enumerate(lines) for m in [pat.match(ln)] if m]
+        if len(hits) > len(best_hits):
+            best_pat, best_hits = pat, hits
+    if len(best_hits) < 2:
+        return None
+    # 同一集号可能在页眉重复出现（PDF 提取的页眉），只认"集号递增"的首次出现
+    marks = []
+    for i, m in best_hits:
+        ep = _cn_num(m.group(1))
+        if ep and (not marks or ep > marks[-1][1]):
+            marks.append((i, ep))
+    if len(marks) < 2:
+        return None
+    out = []
+    for k, (start, ep) in enumerate(marks):
+        end = marks[k + 1][0] if k + 1 < len(marks) else len(lines)
+        body = "\n".join(lines[start:end]).strip()
+        if len(body) >= 300:  # 太短的"集"多半是目录/页眉误判，丢掉
+            out.append((ep, body))
+    return out if len(out) >= 2 else None
+
+
+def _zip_entries(raw):
+    """解 ZIP → [(文件名, bytes)]，按文件名里的数字自然排序（"第2集"排在"第10集"前面）。
+    中文文件名坑：老压缩工具不打 UTF-8 标记，zipfile 会按 cp437 读出乱码——按惯例转回 GBK。"""
+    z = zipfile.ZipFile(io.BytesIO(raw))
+    entries = []
+    for info in z.infolist():
+        if info.is_dir():
+            continue
+        name = info.filename
+        if not (info.flag_bits & 0x800):  # 无 UTF-8 标记：cp437 → gbk 修复中文名
+            try:
+                name = name.encode("cp437").decode("gbk")
+            except (UnicodeDecodeError, UnicodeEncodeError):
+                pass
+        base = name.rsplit("/", 1)[-1]
+        if base.startswith(".") or "__MACOSX" in name:
+            continue
+        if not re.search(r"\.(pdf|txt|docx|fdx|md)$", base, re.I):
+            continue
+        if info.file_size > 40 * 1024 * 1024:
+            continue
+        entries.append((base, z.read(info)))
+
+    def natkey(item):
+        return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", item[0])]
+    entries.sort(key=natkey)
+    return entries
 
 
 # ============================================================ 切场（正则多模式评选）
@@ -346,19 +450,23 @@ ANALYSIS_SYSTEM = (
 )
 
 SCENES_SYSTEM = (
-    "你是资深影视统筹（制片统筹师），任务：把剧本片段拆成标准分场表。要求：\n"
+    "你是资深影视统筹（制片统筹师），任务：把剧本片段拆成中国剧组标准格式的分场表。要求：\n"
     "- 按剧本场次逐场提取；若片段没有明确场头，按地点/时间跳转自行合理断场。\n"
     "- 原文有场号就照抄原文场号；没有就按给定起始号顺延。\n"
-    "- characters 列出场的全部人物（按戏份主次排序），同一人物全篇用统一姓名。\n"
-    "- special 只填会影响成本与排期的特殊需求：雨戏/水戏/夜外/车戏/打戏/爆破/明火/特效/动物/儿童/群演大场面/裸露/高空/航拍/年代或奇幻置景 等，没有就空数组。\n"
+    "- atmo（气氛）只用：日/夜/晨/昏（黄昏傍晚归\"昏\"，清晨黎明归\"晨\"）。\n"
+    "- 场景分两级：mainLoc 主场景=大地点（如\"张微家\"\"公司\"\"海边\"，顺场表按它归组转场），"
+    "subLoc 分场景=具体空间（如\"客厅-厨房\"\"总裁办公室\"\"沙滩\"），没有更细分就留空。\n"
+    "- content（内容提示）：制片视角一句话（40字内）讲清这场干什么；回忆/梦境/闪回要标出来。\n"
+    "- action（动作/特效）：打戏/追车/爆破/雨戏/水戏/威亚/特效镜头等会影响成本排期的，没有留空。\n"
+    "- characters 列出场的【主要人物】（有名有姓的角色，按戏份排），同一人物全篇用统一姓名；"
+    "extras 填特约演员（有戏份的无名角色，如\"出租车司机/护士\"），crowd 填群众演员（如\"环境人物/路人20人\"），没有留空。\n"
+    "- propsNote（服化道提示）：该场关键道具+服装化妆要点合写一格（如\"小铲子/手机；周野湿透外卖服\"），没有留空。\n"
     "- pages 按一页≈成片一分钟估该场体量，0.25~3 的小数。\n"
-    "- summary 用制片视角一句话（40字内）讲清这场干什么。\n"
-    "- props 只列关键/需置办的道具，别把杯子筷子全堆上。\n"
     "只输出 JSON：\n"
-    '{"scenes":[{"no":"场号(字符串,如 12 或 3-5)","ep":集数数字或null,"intExt":"内/外/内外",'
-    '"dayNight":"日/夜/晨/黄昏","location":"场景地点（精确到可搭可找的程度）","summary":"剧情简述",'
-    '"characters":["人物"],"extras":"群演特约说明，无则空串","props":["关键道具"],'
-    '"costume":"服化要点，无则空串","special":["特殊需求"],"pages":0.5}]}'
+    '{"scenes":[{"no":"场号(字符串)","ep":集数数字或null,"atmo":"日/夜/晨/昏","intExt":"内/外/内外",'
+    '"mainLoc":"主场景","subLoc":"分场景或空串","pages":0.5,"content":"内容提示",'
+    '"action":"动作/特效或空串","characters":["主要人物"],"extras":"特约演员或空串",'
+    '"crowd":"群众演员或空串","propsNote":"服化道提示或空串"}]}'
 )
 
 BUDGET_SYSTEM = (
@@ -411,38 +519,70 @@ def _run_analysis(job_id, project):
     _project_save_field(project["id"], "analysis", result)
 
 
-def _run_scenes(job_id, project):
+def _do_scenes(project, progress_cb):
+    """拆场核心：单集任务和剧集批量任务都走这。progress_cb(百分比, 文案) 由调用方决定怎么汇报。"""
     batches, mode = make_batches(project["script_text"])
     truncated = False
     if len(batches) > SCENE_BATCH_MAX:
         batches = batches[:SCENE_BATCH_MAX]
         truncated = True
     total = len(batches)
+    ep_no = project.get("episode")
     all_scenes = []
     for i, b in enumerate(batches):
-        _job_update(job_id, progress=round(i * 100.0 / total, 1),
-                    message="正在拆解第 %d/%d 批（已出 %d 场）…" % (i + 1, total, len(all_scenes)))
+        progress_cb(round(i * 100.0 / total, 1), "第 %d/%d 批（已出 %d 场）" % (i + 1, total, len(all_scenes)))
         hint = ("本片段含约 %d 场。" % b["sceneCount"]) if b["sceneCount"] else "本片段没有标准场头，请你自行断场。"
-        user = ("剧本《%s》片段 %d/%d。%s若原文无场号，从第 %d 场开始顺延编号。\n\n%s"
-                % (project["title"] or "未命名", i + 1, total, hint, len(all_scenes) + 1, b["text"]))
+        user = ("剧本《%s》片段 %d/%d。%s若原文无场号，从第 %d 场开始顺延编号。%s\n\n%s"
+                % (project["title"] or "未命名", i + 1, total, hint, len(all_scenes) + 1,
+                   ("本剧本是第 %d 集，每场 ep 填 %d。" % (ep_no, ep_no)) if ep_no else "", b["text"]))
         try:
             out = _call_ai(MODEL_FAST, SCENES_SYSTEM, user, max_tokens=7000)
             scenes = out.get("scenes") or []
         except Exception as e:
             # 单批失败不毁全局：记一条占位，继续往下跑
-            scenes = [{"no": "?", "ep": None, "intExt": "", "dayNight": "", "location": "（本批拆解失败：%s）" % e,
-                       "summary": "请手动补这一段", "characters": [], "extras": "", "props": [],
-                       "costume": "", "special": [], "pages": 0}]
+            scenes = [{"no": "?", "ep": ep_no, "atmo": "", "intExt": "", "mainLoc": "（本批拆解失败：%s）" % e,
+                       "subLoc": "", "content": "请手动补这一段", "action": "", "characters": [],
+                       "extras": "", "crowd": "", "propsNote": "", "pages": 0}]
+        if ep_no:
+            for s in scenes:
+                s["ep"] = ep_no  # 集号以项目为准，防模型漏填/填错
         all_scenes.extend(scenes)
     result = {"scenes": all_scenes, "mode": mode, "generatedAt": _now()}
     if truncated:
         result["truncatedNote"] = "剧本太长，只拆了前 %d 批（约 %d 万字）。建议按集拆开分别上传。" % (
             SCENE_BATCH_MAX, SCENE_BATCH_MAX * SCENE_BATCH_CHARS // 10000)
     _project_save_field(project["id"], "scenes", result)
+    return len(all_scenes)
+
+
+def _run_scenes(job_id, project):
+    _do_scenes(project, lambda pct, msg: _job_update(job_id, progress=pct, message="正在拆解" + msg + "…"))
+
+
+def _run_series_scenes(job_id, series_id, force):
+    """剧集批量拆场：按集号顺序一集一集拆（已拆过的集默认跳过，断点续跑友好）。"""
+    with _db() as c:
+        rows = c.execute("SELECT * FROM projects WHERE series_id=? ORDER BY episode", (series_id,)).fetchall()
+    eps = [dict(r) for r in rows]
+    total = len(eps)
+    if not total:
+        raise RuntimeError("这个剧集组里没有集")
+    done_scenes = 0
+    for idx, prj in enumerate(eps):
+        if prj.get("scenes") and not force:
+            continue  # 已有结果的集不重拆（中途断了再点一次，接着跑没拆的）
+
+        def cb(pct, msg, _idx=idx, _t=prj["title"]):
+            overall = round((_idx + pct / 100.0) * 100.0 / total, 1)
+            _job_update(job_id, progress=overall,
+                        message="第 %d/%d 集《%s》：%s" % (_idx + 1, total, _t or "未命名", msg))
+        n = _do_scenes(prj, cb)
+        done_scenes += n
+    _job_update(job_id, message="全部 %d 集拆完，共 %d 场" % (total, done_scenes))
 
 
 def _scene_stats(scenes_data):
-    """从分场表汇总统计，给预算任务当依据。"""
+    """从分场表汇总统计，给预算任务当依据。（兼容 v1 旧字段名：location/dayNight/special）"""
     sc = (scenes_data or {}).get("scenes") or []
     if not sc:
         return None
@@ -450,14 +590,17 @@ def _scene_stats(scenes_data):
     day = night = interior = exterior = 0
     pages = 0.0
     for s in sc:
-        loc = (s.get("location") or "").strip()
+        loc = (s.get("mainLoc") or s.get("location") or "").strip()
         if loc:
             locs[loc] = locs.get(loc, 0) + 1
         for ch in (s.get("characters") or []):
             chars[ch] = chars.get(ch, 0) + 1
-        for sp in (s.get("special") or []):
-            specials[sp] = specials.get(sp, 0) + 1
-        dn = s.get("dayNight") or ""
+        act = s.get("action")
+        sp_list = [act] if (act and isinstance(act, str)) else (s.get("special") or [])
+        for sp in sp_list:
+            if sp:
+                specials[sp] = specials.get(sp, 0) + 1
+        dn = s.get("atmo") or s.get("dayNight") or ""
         if "夜" in dn:
             night += 1
         elif dn:
@@ -512,17 +655,25 @@ def _run_budget(job_id, project, options):
     _project_save_field(project["id"], "budget", result)
 
 
-_RUNNERS = {"analysis": _run_analysis, "scenes": _run_scenes, "budget": _run_budget}
+_RUNNERS = {"analysis": _run_analysis, "scenes": _run_scenes, "budget": _run_budget,
+            "series_scenes": _run_series_scenes}
 
 
 def _job_thread(job_id, kind, project, options):
     with _ai_slots:  # 限流：最多 2 个 AI 任务并行
         try:
             if kind == "budget":
-                _RUNNERS[kind](job_id, project, options)
+                _run_budget(job_id, project, options)
+            elif kind == "series_scenes":
+                _run_series_scenes(job_id, project["id"], bool((options or {}).get("force")))
+            elif kind == "analysis":
+                _run_analysis(job_id, project)
             else:
-                _RUNNERS[kind](job_id, project)
-            _job_update(job_id, status="done", progress=100, message="完成")
+                _run_scenes(job_id, project)
+            if kind == "series_scenes":
+                _job_update(job_id, status="done", progress=100)  # 汇总文案已由 runner 写好，别覆盖
+            else:
+                _job_update(job_id, status="done", progress=100, message="完成")
         except Exception as e:
             _job_update(job_id, status="error", error=str(e)[:500],
                         message="失败：" + str(e)[:200])
@@ -549,8 +700,37 @@ def _project_brief(row):
     return {
         "id": row["id"], "title": row["title"], "scriptName": row["script_name"],
         "words": len(row["script_text"] or ""), "created": row["created"], "updated": row["updated"],
+        "seriesId": row["series_id"] if "series_id" in row.keys() else None,
+        "episode": row["episode"] if "episode" in row.keys() else None,
         "has": {"analysis": bool(row["analysis"]), "scenes": bool(row["scenes"]), "budget": bool(row["budget"])},
     }
+
+
+def _create_series(handler, owner, series_title, parts, errors):
+    """建一个剧集组 + 每集一个项目。parts=[(集号, 文件名/集名, 文本)]。"""
+    sid = secrets.token_hex(8)
+    now = _now()
+    with _db() as c:
+        c.execute("INSERT INTO series(id,owner,title,created,updated) VALUES(?,?,?,?,?)",
+                  (sid, owner, series_title, now, now))
+        for ep, name, text in sorted(parts, key=lambda x: x[0]):
+            c.execute("INSERT INTO projects(id,owner,title,script_name,script_text,meta,"
+                      "series_id,episode,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                      (secrets.token_hex(8), owner, "%s 第%d集" % (series_title, ep),
+                       name[:120], text, "{}", sid, ep, now, now))
+    out = {"ok": True, "series": {"id": sid, "title": series_title, "epCount": len(parts)}}
+    if errors:
+        out["warnings"] = errors[:10]
+    return handler._json(out)
+
+
+def _series_payload(c, srow):
+    """剧集组详情：组信息 + 各集 brief（按集号排）。"""
+    eps = [(_project_brief(r)) for r in c.execute(
+        "SELECT * FROM projects WHERE series_id=? ORDER BY episode", (srow["id"],)).fetchall()]
+    return {"id": srow["id"], "title": srow["title"], "created": srow["created"],
+            "episodes": eps, "epCount": len(eps),
+            "scenesDone": sum(1 for e in eps if e["has"]["scenes"])}
 
 
 def _get_project(pid, owner):
@@ -583,11 +763,49 @@ def _route(handler, method, path):
         if p == "/api/production/projects":
             owner = _resolve_owner(handler, q)
             if not owner:
-                return handler._json({"ok": True, "projects": []})
+                return handler._json({"ok": True, "projects": [], "series": []})
             with _db() as c:
-                rows = c.execute("SELECT * FROM projects WHERE owner=? ORDER BY updated DESC",
-                                 (owner,)).fetchall()
-            return handler._json({"ok": True, "projects": [_project_brief(r) for r in rows]})
+                rows = c.execute("SELECT * FROM projects WHERE owner=? AND series_id IS NULL "
+                                 "ORDER BY updated DESC", (owner,)).fetchall()
+                srows = c.execute("SELECT * FROM series WHERE owner=? ORDER BY updated DESC",
+                                  (owner,)).fetchall()
+                series = [_series_payload(c, s) for s in srows]
+            return handler._json({"ok": True, "projects": [_project_brief(r) for r in rows],
+                                  "series": series})
+
+        if p == "/api/production/series":
+            owner = _resolve_owner(handler, q)
+            with _db() as c:
+                srow = c.execute("SELECT * FROM series WHERE id=? AND owner=?",
+                                 (q.get("id", ""), owner or "")).fetchone()
+                if not srow:
+                    return handler._json({"ok": False, "error": "剧集不存在或无权限"}, 404)
+                return handler._json({"ok": True, "series": _series_payload(c, srow)})
+
+        if p == "/api/production/series_scenes":
+            # 总场景表：把各集的分场表按集号串起来返回（顺场归组由前端实时做，和单集一致）
+            owner = _resolve_owner(handler, q)
+            with _db() as c:
+                srow = c.execute("SELECT * FROM series WHERE id=? AND owner=?",
+                                 (q.get("id", ""), owner or "")).fetchone()
+                if not srow:
+                    return handler._json({"ok": False, "error": "剧集不存在或无权限"}, 404)
+                rows = c.execute("SELECT episode, scenes FROM projects WHERE series_id=? ORDER BY episode",
+                                 (srow["id"],)).fetchall()
+            all_scenes, missing = [], []
+            for r in rows:
+                if not r["scenes"]:
+                    missing.append(r["episode"])
+                    continue
+                try:
+                    sc = json.loads(r["scenes"]).get("scenes") or []
+                except Exception:
+                    continue
+                for s in sc:
+                    s["ep"] = r["episode"]  # 总表里集号以项目为准
+                all_scenes.extend(sc)
+            return handler._json({"ok": True, "title": srow["title"], "scenes": all_scenes,
+                                  "missingEpisodes": missing})
 
         if p == "/api/production/project":
             owner = _resolve_owner(handler, q)
@@ -616,14 +834,49 @@ def _route(handler, method, path):
 
     if p == "/api/production/upload":
         filename = (body.get("filename") or "剧本.txt").strip()[:120]
+        title = (body.get("title") or "").strip()[:80] \
+            or re.sub(r"\.(txt|docx|fdx|md|pdf|zip)$", "", filename, flags=re.I)
+        raw = None
         if body.get("fileB64"):
             import base64
             try:
                 raw = base64.b64decode(body["fileB64"])
             except Exception:
                 return handler._json({"ok": False, "error": "文件数据损坏，请重新上传"}, 400)
-            if len(raw) > 20 * 1024 * 1024:
-                return handler._json({"ok": False, "error": "文件超过 20MB"}, 400)
+            if len(raw) > 60 * 1024 * 1024:
+                return handler._json({"ok": False, "error": "文件超过 60MB"}, 400)
+
+        # ---- ZIP：解包 → 多个文件=每个文件一集；单个文件=继续走单文件逻辑 ----
+        if raw is not None and filename.lower().endswith(".zip"):
+            try:
+                entries = _zip_entries(raw)
+            except zipfile.BadZipFile:
+                return handler._json({"ok": False, "error": "ZIP 包打不开（文件可能损坏）"}, 400)
+            if not entries:
+                return handler._json({"ok": False, "error": "ZIP 里没找到剧本文件（支持 .pdf/.txt/.docx/.fdx）"}, 400)
+            if len(entries) > 60:
+                return handler._json({"ok": False, "error": "ZIP 里文件太多（最多 60 个）"}, 400)
+            if len(entries) == 1:
+                filename, raw = entries[0]  # 单文件 zip：拆包后按普通单文件处理（可能内部还分集）
+            else:
+                parts, errors = [], []
+                for i, (name, data) in enumerate(entries):
+                    t, e = parse_script_file(name, data)
+                    if e:
+                        errors.append("%s：%s" % (name, e))
+                        continue
+                    m = re.search(r"(\d+)", name)
+                    ep = int(m.group(1)) if m else (i + 1)
+                    parts.append((ep, name, t))
+                if not parts:
+                    return handler._json({"ok": False, "error": "ZIP 里的文件都没解析成功：" + "；".join(errors[:3])}, 400)
+                # 集号去重：文件名抓出来的数字撞了就按顺序重排
+                if len(set(x[0] for x in parts)) != len(parts):
+                    parts = [(i + 1, n, t) for i, (_, n, t) in enumerate(parts)]
+                return _create_series(handler, owner, title, parts, errors)
+
+        # ---- 单文件（txt/docx/fdx/pdf 或前端直传文本）----
+        if raw is not None:
             text, err = parse_script_file(filename, raw)
         else:
             text = re.sub(r"\r\n?", "\n", str(body.get("text") or "")).strip()
@@ -632,7 +885,13 @@ def _route(handler, method, path):
                 text, err = None, "剧本超过 %d 万字——请按集拆开上传" % (MAX_SCRIPT_CHARS // 10000)
         if err:
             return handler._json({"ok": False, "error": err}, 400)
-        title = (body.get("title") or "").strip()[:80] or re.sub(r"\.(txt|docx|fdx|md)$", "", filename, flags=re.I)
+
+        # ---- 多集检测：一个文件里装着"第1集/第2集…"→ 自动拆成一集一个项目 ----
+        eps = split_episodes(text)
+        if eps:
+            parts = [(ep, "%s 第%d集" % (title, ep), t) for ep, t in eps]
+            return _create_series(handler, owner, title, parts, [])
+
         pid = secrets.token_hex(8)
         with _db() as c:
             c.execute("INSERT INTO projects(id,owner,title,script_name,script_text,meta,created,updated) "
@@ -671,16 +930,37 @@ def _route(handler, method, path):
         return handler._json({"ok": True})
 
     if p == "/api/production/run":
-        proj = _get_project(body.get("id", ""), owner)
-        if not proj:
-            return handler._json({"ok": False, "error": "项目不存在或无权限"}, 404)
         kind = body.get("kind")
         if kind not in _RUNNERS:
             return handler._json({"ok": False, "error": "未知任务类型"}, 400)
         if not _load_key():
             return handler._json({"ok": False, "error": "服务器未配置 DeepSeek key"}, 500)
+        if kind == "series_scenes":
+            with _db() as c:
+                srow = c.execute("SELECT * FROM series WHERE id=? AND owner=?",
+                                 (body.get("id", ""), owner)).fetchone()
+            if not srow:
+                return handler._json({"ok": False, "error": "剧集不存在或无权限"}, 404)
+            job_id = start_job({"id": srow["id"]}, kind, body.get("options") or {})
+            return handler._json({"ok": True, "jobId": job_id})
+        proj = _get_project(body.get("id", ""), owner)
+        if not proj:
+            return handler._json({"ok": False, "error": "项目不存在或无权限"}, 404)
         job_id = start_job(proj, kind, body.get("options") or {})
         return handler._json({"ok": True, "jobId": job_id})
+
+    if p == "/api/production/delete_series":
+        with _db() as c:
+            srow = c.execute("SELECT * FROM series WHERE id=? AND owner=?",
+                             (body.get("id", ""), owner)).fetchone()
+            if not srow:
+                return handler._json({"ok": False, "error": "剧集不存在或无权限"}, 404)
+            c.execute("DELETE FROM jobs WHERE project_id IN "
+                      "(SELECT id FROM projects WHERE series_id=?)", (srow["id"],))
+            c.execute("DELETE FROM jobs WHERE project_id=?", (srow["id"],))
+            c.execute("DELETE FROM projects WHERE series_id=?", (srow["id"],))
+            c.execute("DELETE FROM series WHERE id=?", (srow["id"],))
+        return handler._json({"ok": True})
 
     return handler._json({"ok": False, "error": "未知接口"}, 404)
 

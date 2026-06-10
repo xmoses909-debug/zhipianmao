@@ -1,9 +1,10 @@
-/* 制片帽 · 制作板块（制片统筹系统）
+/* 制片帽 · 制作板块（制片统筹系统）v2
    ⚠️ 互不干扰约定：本文件与 app.js（策划板块）完全分离——
    - 不调用 app.js 的任何函数；只【只读】localStorage 的登录令牌（maozhipian.token），从不写它。
    - 界面是独立的全屏覆盖层（.prod-root），不参与 app.js 的屏幕路由（showScreen）。
-   - 唯一的接入点：接管主页导航里"制作"那颗按钮（app.js 没绑它的事件）。
-   三个区域：① 剧本解剖分析 ② 分场表/顺场表 ③ 参考预算 —— 全部可编辑、可保存、可导出。 */
+   - 接入点：接管主页导航里"制作"按钮；自己的顶栏里也画了三大板块导航（点"策划"=关闭本层露出主页）。
+   v2 新增：剧集组（ZIP/多集 PDF 自动拆成一集一项目 + 总分场/总顺场表）、《开盘》行业字段、
+   演员矩阵 CSV、墨绿色系、手机端导航。 */
 (function () {
   "use strict";
 
@@ -54,11 +55,16 @@
 
   /* ===== 全局状态 ===== */
   var S = {
-    built: false, view: "home", projects: [], cur: null,
-    tab: "analysis", subTab: "order", editingAnalysis: false, editBuf: null,
+    built: false, view: "home",            // home | project | series
+    projects: [], seriesList: [],
+    cur: null,                              // 当前项目（含三块结果）
+    curSeries: null,                        // 当前剧集组（含 episodes briefs）
+    seriesScenes: null,                     // 总场景表缓存 {title, scenes, missingEpisodes}
+    tab: "analysis", subTab: "order",       // 项目页 tab；场景表子 tab
+    seriesTab: "eps",                       // 剧集页子 tab：eps | order | set
+    editingAnalysis: false, editBuf: null,
     dirty: { scenes: false, budget: false },
-    job: null,           // {id, kind, t0} 进行中的任务
-    pollTimer: null, progTimer: null
+    job: null, pollTimer: null, progTimer: null
   };
 
   function el(id) { return document.getElementById(id); }
@@ -73,16 +79,20 @@
     toastTimer = setTimeout(function () { t.className = "prod-toast" + (isErr ? " err" : ""); }, isErr ? 5000 : 2600);
   }
 
-  /* ===== 骨架 ===== */
+  /* ===== 骨架：顶栏 = brand + 三大板块导航（板块随时可切，这是产品级导航） ===== */
   function buildRoot() {
     if (S.built) return;
     var root = document.createElement("div");
     root.className = "prod-root"; root.id = "prodRoot"; root.hidden = true;
     root.innerHTML =
       '<div class="prod-topbar">'
-      + '<button class="prod-back" id="prodBack">← 返回选题雷达</button>'
       + '<div class="prod-brand"><span class="prod-hat">' + HAT + '</span>'
-      + '<div class="prod-brand-text"><strong>制片帽 · 制作</strong><span>制片统筹系统</span></div></div>'
+      + '<div class="prod-brand-text"><strong>制片帽</strong><span>制作 · 制片统筹</span></div></div>'
+      + '<nav class="prod-modules">'
+      + '<button class="prod-module" id="prodNavPlan">策划 · 选题雷达</button>'
+      + '<button class="prod-module active">制作 · 制片统筹</button>'
+      + '<button class="prod-module disabled" title="即将上线">发行 <em>即将上线</em></button>'
+      + '</nav>'
       + '<div class="prod-top-right" id="prodTopRight"></div>'
       + '</div>'
       + '<div class="prod-wrap" id="prodView"></div>'
@@ -96,12 +106,12 @@
       + '</div></div>'
       + '<div class="prod-toast" id="prodToast"></div>';
     document.body.appendChild(root);
-    el("prodBack").onclick = closeProd;
+    el("prodNavPlan").onclick = closeProd;   // 切回策划板块（覆盖层一关，底下就是选题雷达）
     el("prodLoadBg").onclick = function () { el("prodLoading").hidden = true; renderView(); };
     S.built = true;
   }
 
-  /* ===== 打开 / 关闭 ===== */
+  /* ===== 打开 / 关闭（关闭 = 切到策划板块，不丢任何状态） ===== */
   function openProd() {
     buildRoot();
     el("prodRoot").hidden = false;
@@ -109,24 +119,22 @@
     refreshProjects(true);
   }
   function closeProd() {
-    if (anyDirty() && !confirm("有还没保存的修改，确定离开？（修改只丢这次的，已保存的都在）")) return;
+    if (anyDirty() && !confirm("有还没保存的修改，确定切走？（已保存的不受影响）")) return;
     el("prodRoot").hidden = true;
     document.body.style.overflow = "";
   }
   function anyDirty() { return S.dirty.scenes || S.dirty.budget || S.editingAnalysis; }
 
   /* ===== 数据拉取 ===== */
-  function refreshProjects(autoOpen) {
+  function refreshProjects(reopen) {
     api("/api/production/projects").then(function (j) {
       S.projects = (j && j.projects) || [];
-      if (autoOpen && S.cur) {
-        // 重新打开时若之前在看某项目，刷新它
-        loadProject(S.cur.id, true);
-      } else {
-        S.view = "home"; renderView();
-      }
+      S.seriesList = (j && j.series) || [];
+      if (reopen && S.view === "project" && S.cur) return loadProject(S.cur.id, true);
+      if (reopen && S.view === "series" && S.curSeries) return loadSeries(S.curSeries.id, true);
+      S.view = "home"; renderView();
     }).catch(function () {
-      S.projects = [];
+      S.projects = []; S.seriesList = [];
       S.view = "home"; renderView();
       toast("没连上后端——制作板块需要后端在线（AI 拆解都在服务器上跑）", true);
     });
@@ -135,38 +143,76 @@
     api("/api/production/project?id=" + encodeURIComponent(id)).then(function (j) {
       if (!j.ok) { toast(j.error || "项目打开失败", true); S.view = "home"; renderView(); return; }
       S.cur = j.project;
+      normalizeProjScenes(S.cur);
       if (!keepTab) S.tab = pickDefaultTab(j.project);
       S.view = "project"; S.editingAnalysis = false; S.editBuf = null;
       S.dirty = { scenes: false, budget: false };
       renderView();
     }).catch(function () { toast("网络出错，稍后再试", true); });
   }
+  function loadSeries(id, keepTab) {
+    api("/api/production/series?id=" + encodeURIComponent(id)).then(function (j) {
+      if (!j.ok) { toast(j.error || "剧集打开失败", true); S.view = "home"; renderView(); return; }
+      S.curSeries = j.series;
+      S.seriesScenes = null;             // 集状态可能变了，总表缓存作废
+      if (!keepTab) S.seriesTab = "eps";
+      S.view = "series";
+      renderView();
+    }).catch(function () { toast("网络出错，稍后再试", true); });
+  }
   function pickDefaultTab(p) {
-    if (!p.analysis && !p.scenes && !p.budget) return "analysis";
     if (p.analysis) return "analysis";
     if (p.scenes) return "scenes";
-    return "budget";
+    if (p.budget) return "budget";
+    return "analysis";
+  }
+
+  /* ===== 场次字段：v2 行业格式（对齐《开盘》场景表），老数据自动兼容 ===== */
+  function normalizeScene(s) {
+    if (s.mainLoc == null && s.location != null) s.mainLoc = s.location;
+    if (s.atmo == null && s.dayNight != null) s.atmo = s.dayNight;
+    if (s.content == null && s.summary != null) s.content = s.summary;
+    if (s.action == null) {
+      if (s.special && s.special.join) s.action = s.special.join("、");
+      else if (typeof s.special === "string") s.action = s.special;
+    }
+    if (s.propsNote == null) {
+      var parts = [];
+      if (s.props && s.props.length) parts.push(s.props.join("/"));
+      if (s.costume) parts.push(s.costume);
+      if (parts.length) s.propsNote = parts.join("；");
+    }
+    if (s.subLoc == null) s.subLoc = "";
+    if (s.crowd == null) s.crowd = "";
+    if (s.extras == null) s.extras = "";
+    return s;
+  }
+  function normalizeProjScenes(p) {
+    if (p && p.scenes && p.scenes.scenes) p.scenes.scenes.forEach(normalizeScene);
   }
 
   /* ===== 视图分发 ===== */
   function renderView() {
     var tr = el("prodTopRight");
-    tr.innerHTML = token() ? "已登录 · 项目存云端" : "未登录 · 项目绑定本设备（登录后自动归入账号）";
+    tr.textContent = token() ? "已登录 · 项目存云端" : "未登录 · 项目绑定本设备";
     if (S.view === "project" && S.cur) renderProject();
+    else if (S.view === "series" && S.curSeries) renderSeries();
     else renderHome();
   }
 
-  /* ===================================================== 首页（项目列表） */
+  /* ===================================================== 首页 */
   function renderHome() {
     var v = el("prodView"), h = "";
     h += '<div class="prod-head"><div><h1>制片统筹</h1>'
       + '<p class="prod-sub">上传剧本 → 解剖分析 → 分场/顺场表 → 参考预算。AI 出初稿，每一格都能改——最终以你为准。</p></div></div>';
-    if (!S.projects.length) {
+    var hasAny = S.projects.length || S.seriesList.length;
+    if (!hasAny) {
       h += '<div class="prod-hero"><h2>把剧本交给制片帽</h2>'
-        + '<p>支持 .txt / .docx / .fdx（Final Draft）。上传后它会通读全本：</p>'
+        + '<p>支持 .txt / .docx / .pdf / .fdx，<b>多集剧集直接传 ZIP 压缩包</b>（或一个含全集的大文件）——'
+        + '会自动按集拆成一集一个项目，逐集拆解，最后汇出全剧总场景表。</p>'
         + '<div class="prod-feats">'
         + '<div class="prod-feat"><span>🔬</span><b>解剖分析</b><i>梗概·结构·人物小传·亮点风险</i></div>'
-        + '<div class="prod-feat"><span>🎬</span><b>分场 / 顺场表</b><i>内外日夜·演员·道具·特殊需求</i></div>'
+        + '<div class="prod-feat"><span>🎬</span><b>分场 / 顺场表</b><i>气氛·主分场景·演员·服化道</i></div>'
         + '<div class="prod-feat"><span>💰</span><b>参考预算</b><i>按中国市场行情估科目区间</i></div>'
         + '</div>'
         + uploadCardHTML()
@@ -174,6 +220,15 @@
     } else {
       h += '<div class="prod-grid">';
       h += uploadCardHTML();
+      S.seriesList.forEach(function (s) {
+        h += '<div class="prod-proj-card is-series" data-sid="' + s.id + '">'
+          + '<div class="prod-proj-title">' + esc(s.title || "未命名") + '<span class="prod-series-badge">剧集 · ' + s.epCount + ' 集</span></div>'
+          + '<div class="prod-proj-meta">分场表 ' + s.scenesDone + '/' + s.epCount + ' 集已拆</div>'
+          + '<div class="prod-proj-chips">'
+          + '<span class="prod-chip' + (s.scenesDone === s.epCount && s.epCount > 0 ? " done" : "") + '">'
+          + (s.scenesDone === s.epCount && s.epCount > 0 ? "✓ 总场景表可出" : "总场景表待全集拆完") + '</span>'
+          + '</div></div>';
+      });
       S.projects.forEach(function (p) {
         h += '<div class="prod-proj-card" data-id="' + p.id + '">'
           + '<div class="prod-proj-title">' + esc(p.title || "未命名") + '</div>'
@@ -188,16 +243,20 @@
     }
     v.innerHTML = h;
     bindUpload();
-    [].forEach.call(v.querySelectorAll(".prod-proj-card"), function (c) {
+    [].forEach.call(v.querySelectorAll(".prod-proj-card[data-id]"), function (c) {
       c.onclick = function () { loadProject(c.getAttribute("data-id")); };
+    });
+    [].forEach.call(v.querySelectorAll(".prod-proj-card[data-sid]"), function (c) {
+      c.onclick = function () { loadSeries(c.getAttribute("data-sid")); };
     });
   }
 
   function uploadCardHTML() {
     return '<div class="prod-upload-card" id="prodUpload">'
       + '<span class="big">📄</span><b>上传剧本，新建项目</b>'
-      + '<i>点击选择文件，或把文件拖进来<br>.txt / .docx / .fdx · 50 万字以内（长剧建议按集传）</i>'
-      + '<input type="file" id="prodFile" accept=".txt,.md,.docx,.fdx" style="display:none" />'
+      + '<i>点击选择文件，或把文件拖进来<br>.txt / .docx / .pdf / .fdx，多集剧传 .zip<br>'
+      + '单集 50 万字以内；含"第N集"的大文件会自动按集拆开</i>'
+      + '<input type="file" id="prodFile" accept=".txt,.md,.docx,.fdx,.pdf,.zip" style="display:none" />'
       + '</div>';
   }
 
@@ -221,39 +280,149 @@
   }
 
   function handleFile(file) {
-    if (file.size > 20 * 1024 * 1024) return toast("文件超过 20MB——剧本不该这么大，检查一下文件", true);
-    var title = prompt("给这个项目起个名（默认用文件名）：", file.name.replace(/\.(txt|docx|fdx|md)$/i, ""));
+    if (file.size > 60 * 1024 * 1024) return toast("文件超过 60MB——检查一下是不是传错了", true);
+    var title = prompt("给这个项目起个名（默认用文件名）：", file.name.replace(/\.(txt|docx|fdx|md|pdf|zip)$/i, ""));
     if (title === null) return;   // 用户取消
     var reader = new FileReader();
-    toast("正在上传解析…");
+    toast(/\.(zip|pdf)$/i.test(file.name) ? "正在上传解析（PDF/ZIP 解析要多等几秒）…" : "正在上传解析…");
     reader.onload = function () {
       api("/api/production/upload", {
         method: "POST",
         body: { filename: file.name, title: (title || "").trim(), fileB64: abToB64(reader.result) }
       }).then(function (j) {
         if (!j.ok) return toast(j.error || "上传失败", true);
-        toast("✓ 剧本已就位（" + fmtWan(j.project.words) + (j.project.sceneHeads ? "，识别到约 " + j.project.sceneHeads + " 个场头" : "") + "）");
-        refreshProjectsThenOpen(j.project.id);
+        if (j.warnings && j.warnings.length) toast("部分文件没解析成功：" + j.warnings[0], true);
+        if (j.series) {
+          toast("✓ 已按集拆好：《" + j.series.title + "》共 " + j.series.epCount + " 集");
+          refreshListThen(function () { loadSeries(j.series.id); });
+        } else {
+          toast("✓ 剧本已就位（" + fmtWan(j.project.words) + (j.project.sceneHeads ? "，识别到约 " + j.project.sceneHeads + " 个场头" : "") + "）");
+          refreshListThen(function () { loadProject(j.project.id); });
+        }
       }).catch(function () { toast("上传失败：没连上后端", true); });
     };
     reader.readAsArrayBuffer(file);
   }
-  function refreshProjectsThenOpen(id) {
+  function refreshListThen(cb) {
     api("/api/production/projects").then(function (j) {
       S.projects = (j && j.projects) || [];
-      loadProject(id);
+      S.seriesList = (j && j.series) || [];
+      cb();
     });
+  }
+
+  /* ===================================================== 剧集组页 */
+  function renderSeries() {
+    var s = S.curSeries, v = el("prodView");
+    var allDone = s.scenesDone === s.epCount && s.epCount > 0;
+    var totalWords = 0;
+    s.episodes.forEach(function (e) { totalWords += e.words || 0; });
+    var h = '<div class="prod-crumb"><a id="prodCrumbHome">📁 全部项目</a> / 剧集《' + esc(s.title) + '》</div>';
+    h += '<div class="prod-proj-head">'
+      + '<span class="prod-title-input" style="cursor:default">' + esc(s.title) + '</span>'
+      + '<span class="prod-proj-info">' + s.epCount + ' 集 · 共 ' + fmtWan(totalWords) + '</span>'
+      + '<div class="prod-proj-actions">'
+      + '<button class="prod-btn danger" id="prodDelSeries">删除整部剧</button>'
+      + '</div></div>';
+    h += runningStrip("series_scenes");
+    h += '<div class="prod-series-bar">'
+      + '<span class="info">分场表进度：<b>' + s.scenesDone + ' / ' + s.epCount + '</b> 集'
+      + (allDone ? " · 全部拆完，总场景表已就绪" : "") + '</span>'
+      + (S.job ? "" : '<button class="prod-btn" id="prodRunSeries" style="margin-left:auto">'
+        + (s.scenesDone ? "▶ 继续拆没拆的集" : "▶ 依次拆全部 " + s.epCount + " 集") + '</button>')
+      + '</div>';
+    h += '<div class="prod-subtabs">'
+      + '<button class="prod-subtab' + (S.seriesTab === "eps" ? " active" : "") + '" data-st="eps">各集列表</button>'
+      + '<button class="prod-subtab' + (S.seriesTab === "order" ? " active" : "") + '" data-st="order">总分场表（按集场序）</button>'
+      + '<button class="prod-subtab' + (S.seriesTab === "set" ? " active" : "") + '" data-st="set">总顺场表（按场景归组）</button>'
+      + '</div>'
+      + '<div id="prodSeriesBody"></div>';
+    v.innerHTML = h;
+    el("prodCrumbHome").onclick = function () { S.curSeries = null; refreshProjects(); };
+    el("prodDelSeries").onclick = function () {
+      if (!confirm("删除整部《" + s.title + "》？全部 " + s.epCount + " 集的剧本和拆解结果都会删掉，不可恢复。")) return;
+      api("/api/production/delete_series", { method: "POST", body: { id: s.id } }).then(function (j) {
+        if (j.ok) { toast("已删除"); S.curSeries = null; refreshProjects(); }
+        else toast(j.error || "删除失败", true);
+      });
+    };
+    var rb = el("prodRunSeries");
+    if (rb) rb.onclick = function () { startJob("series_scenes", {}, s.id); };
+    [].forEach.call(v.querySelectorAll(".prod-subtab"), function (b) {
+      b.onclick = function () { S.seriesTab = b.getAttribute("data-st"); renderSeriesBody(); };
+    });
+    renderSeriesBody();
+  }
+
+  function renderSeriesBody() {
+    var s = S.curSeries, box = el("prodSeriesBody");
+    if (!box) return;
+    if (S.seriesTab === "eps") {
+      var h = '<div class="prod-ep-grid">';
+      s.episodes.forEach(function (e) {
+        h += '<div class="prod-ep-card" data-id="' + e.id + '">'
+          + '<b>第 ' + e.episode + ' 集</b>'
+          + '<span class="meta">' + fmtWan(e.words) + ' · ' + esc(e.scriptName || "") + '</span>'
+          + '<span class="st ' + (e.has.scenes ? "ok" : "no") + '">' + (e.has.scenes ? "✓ 分场表已拆" : "分场表未拆") + '</span>'
+          + '</div>';
+      });
+      h += '</div><p style="font-size:12px;color:var(--ink-faint);margin-top:12px">点开任意一集：可单集拆分场、做剧本解剖、出预算，表格都能编辑。</p>';
+      box.innerHTML = h;
+      [].forEach.call(box.querySelectorAll(".prod-ep-card"), function (c) {
+        c.onclick = function () { loadProject(c.getAttribute("data-id")); };
+      });
+      return;
+    }
+    // 总分场表 / 总顺场表：拉聚合数据（缓存一次）
+    if (S.seriesScenes) return renderSeriesScenes(box);
+    box.innerHTML = '<div class="prod-panel"><div class="prod-empty"><p>正在汇总各集场景表…</p></div></div>';
+    api("/api/production/series_scenes?id=" + encodeURIComponent(s.id)).then(function (j) {
+      if (!j.ok) { box.innerHTML = '<div class="prod-panel"><div class="prod-empty"><p>' + esc(j.error || "汇总失败") + '</p></div></div>'; return; }
+      j.scenes.forEach(normalizeScene);
+      S.seriesScenes = j;
+      renderSeriesScenes(box);
+    });
+  }
+
+  function renderSeriesScenes(box) {
+    var data = S.seriesScenes, sc = data.scenes;
+    var h = "";
+    if (data.missingEpisodes && data.missingEpisodes.length)
+      h += '<div class="prod-note-strip warn">⚠ 第 ' + data.missingEpisodes.join("、") + ' 集还没拆分场表，总表暂不含这些集。</div>';
+    if (!sc.length) {
+      box.innerHTML = h + '<div class="prod-panel"><div class="prod-empty"><span class="big">🗂</span><h3>总场景表</h3>'
+        + '<p>先把各集的分场表拆出来（上方按钮可一键依次拆），拆完这里自动汇总全剧总分场表 + 总顺场表。</p></div></div>';
+      return;
+    }
+    h += '<div class="prod-toolbar">'
+      + '<button class="prod-btn minor" id="prodCsvSeries">⬇ 导出 ' + (S.seriesTab === "set" ? "总顺场表" : "总分场表") + ' CSV（演员矩阵）</button>'
+      + '<span class="hint">总表是各集的汇总视图——要改内容请进对应的集里改，这里会跟着变</span></div>';
+    h += statsStripHTML(sc, true);
+    if (S.seriesTab === "order") h += orderTableHTML(sc, true);
+    else h += setTableHTML(sc, true);
+    box.innerHTML = h;
+    var cb = el("prodCsvSeries");
+    if (cb) cb.onclick = function () {
+      exportScenesCSV(sc, (S.curSeries.title || "剧集") + (S.seriesTab === "set" ? "-总顺场表" : "-总分场表"), S.seriesTab === "set");
+    };
   }
 
   /* ===================================================== 项目页 */
   function renderProject() {
     var p = S.cur, v = el("prodView");
-    var h = '<div class="prod-proj-head">'
+    var crumb = "";
+    if (p.seriesId) {
+      var stitle = S.curSeries && S.curSeries.id === p.seriesId ? S.curSeries.title : "返回剧集";
+      crumb = '<div class="prod-crumb"><a id="prodCrumbHome">📁 全部项目</a> / '
+        + '<a id="prodCrumbSeries">剧集《' + esc(stitle) + '》</a> / 第 ' + (p.episode || "?") + ' 集</div>';
+    } else {
+      crumb = '<div class="prod-crumb"><a id="prodCrumbHome">📁 全部项目</a> / ' + esc(p.title || "未命名") + '</div>';
+    }
+    var h = crumb + '<div class="prod-proj-head">'
       + '<input class="prod-title-input" id="prodTitle" value="' + esc(p.title || "") + '" title="点击改名" />'
       + '<span class="prod-proj-info">' + esc(p.scriptName || "") + ' · ' + fmtWan(p.words) + '</span>'
       + '<div class="prod-proj-actions">'
-      + '<button class="prod-btn minor" id="prodHomeBtn">📁 全部项目</button>'
-      + '<button class="prod-btn danger" id="prodDelBtn">删除项目</button>'
+      + '<button class="prod-btn danger" id="prodDelBtn">删除' + (p.seriesId ? "本集" : "项目") + '</button>'
       + '</div></div>';
     h += '<div class="prod-tabs">'
       + tabBtn("analysis", "🔬 剧本解剖", !!p.analysis)
@@ -262,16 +431,22 @@
       + '</div>'
       + '<div id="prodTabBody"></div>';
     v.innerHTML = h;
-    el("prodHomeBtn").onclick = function () {
+    el("prodCrumbHome").onclick = function () {
       if (anyDirty() && !confirm("有还没保存的修改，确定离开？")) return;
-      S.editingAnalysis = false; S.editBuf = null; S.dirty = { scenes: false, budget: false };
-      S.cur = null; refreshProjects();
+      resetEditState(); S.cur = null; S.curSeries = null; refreshProjects();
+    };
+    var cs = el("prodCrumbSeries");
+    if (cs) cs.onclick = function () {
+      if (anyDirty() && !confirm("有还没保存的修改，确定离开？")) return;
+      resetEditState(); S.cur = null; loadSeries(p.seriesId);
     };
     el("prodDelBtn").onclick = function () {
-      if (!confirm("删除项目《" + (p.title || "未命名") + "》？剧本和所有拆解结果都会删掉，不可恢复。")) return;
+      if (!confirm("删除《" + (p.title || "未命名") + "》？剧本和所有拆解结果都会删掉，不可恢复。")) return;
       api("/api/production/delete", { method: "POST", body: { id: p.id } }).then(function (j) {
-        if (j.ok) { toast("已删除"); S.cur = null; refreshProjects(); }
-        else toast(j.error || "删除失败", true);
+        if (j.ok) {
+          toast("已删除"); S.cur = null;
+          if (p.seriesId) loadSeries(p.seriesId); else refreshProjects();
+        } else toast(j.error || "删除失败", true);
       });
     };
     var ti = el("prodTitle");
@@ -293,6 +468,10 @@
     });
     renderTabBody();
   }
+  function resetEditState() {
+    S.editingAnalysis = false; S.editBuf = null;
+    S.dirty = { scenes: false, budget: false };
+  }
   function tabBtn(key, label, done) {
     return '<button class="prod-tab' + (S.tab === key ? " active" : "") + '" data-tab="' + key + '">'
       + label + (done ? '<span class="dot" title="已生成"></span>' : "") + '</button>';
@@ -309,9 +488,9 @@
   function runningStrip(kind) {
     if (!S.job || S.job.kind !== kind) return "";
     return '<div class="prod-running-strip"><span class="spin"></span>'
-      + '<span>制片帽正在后台干活（' + jobName(kind) + '）——可以先看别的 tab，完成会自动刷新。</span></div>';
+      + '<span>制片帽正在后台干活（' + jobName(kind) + '）——可以先看别的，完成会自动刷新。</span></div>';
   }
-  function jobName(k) { return { analysis: "解剖分析", scenes: "拆分场表", budget: "编制预算" }[k] || k; }
+  function jobName(k) { return { analysis: "解剖分析", scenes: "拆分场表", budget: "编制预算", series_scenes: "整部剧逐集拆分场" }[k] || k; }
 
   /* ===================================================== ① 剧本解剖 */
   function renderAnalysis(box) {
@@ -334,7 +513,7 @@
       + '<button class="prod-btn minor" id="prodRedoAna">↻ 重新生成</button>'
       + '<span class="hint">生成于 ' + fmtDate(a.generatedAt) + ' · 每一段都可编辑，以你改后的为准</span></div>';
     h += '<div class="prod-panel prod-report">';
-    if (a.sampleNote) h += '<div class="prod-note-strip">⚠ ' + esc(a.sampleNote) + '</div>';
+    if (a.sampleNote) h += '<div class="prod-note-strip warn">⚠ ' + esc(a.sampleNote) + '</div>';
     h += '<div class="prod-logline">「' + esc(a.logline || "") + '」</div>'
       + '<div class="prod-facts">'
       + factHTML("类型", a.genre) + factHTML("调性", a.tone) + factHTML("主题内核", a.theme)
@@ -403,7 +582,7 @@
     h += addBtn("structure", "+ 加一段") + "</div>";
     h += '<div class="prod-sec"><h4>人物</h4>';
     (a.characters = a.characters || []).forEach(function (c, i) {
-      h += '<div class="prod-edit-row" style="flex-wrap:wrap;border:1px dashed var(--line);border-radius:10px;padding:10px">'
+      h += '<div class="prod-edit-row" style="flex-wrap:wrap;border:1px dashed var(--prod-line);border-radius:10px;padding:10px">'
         + '<textarea class="prod-edit-field" style="flex:0 0 110px" data-apath="characters.' + i + '.name" rows="1" placeholder="姓名">' + esc(c.name || "") + '</textarea>'
         + '<textarea class="prod-edit-field" style="flex:0 0 90px" data-apath="characters.' + i + '.role" rows="1" placeholder="角色">' + esc(c.role || "") + '</textarea>'
         + '<textarea class="prod-edit-field" style="flex:0 0 80px" data-apath="characters.' + i + '.age" rows="1" placeholder="年龄">' + esc(c.age || "") + '</textarea>'
@@ -471,20 +650,23 @@
     o[ks[ks.length - 1]] = val;
   }
 
-  /* ===================================================== ② 分场 / 顺场表 */
+  /* ===================================================== ② 分场 / 顺场表
+     字段对齐中国剧组的标准场景表（参考帽帽给的《开盘》场景表）：
+     集 | 场 | 气氛 | 内外 | 主场景 | 分场景 | 页数 | 内容提示 | 动作/特效 | 主要演员 | 特约 | 群众 | 服化道提示 */
   var SCENE_COLS = [
-    { k: "no", label: "场号", cls: "c-no" },
-    { k: "ep", label: "集" },
+    { k: "ep", label: "集", num: 1 },
+    { k: "no", label: "场", cls: "c-no" },
+    { k: "atmo", label: "气氛", cls: "c-dn" },
     { k: "intExt", label: "内/外", cls: "c-ie" },
-    { k: "dayNight", label: "日/夜", cls: "c-dn" },
-    { k: "location", label: "场景", cls: "c-loc" },
-    { k: "pages", label: "页数" },
-    { k: "characters", label: "出场人物", arr: 1, cls: "c-chars" },
-    { k: "extras", label: "群演/特约" },
-    { k: "props", label: "关键道具", arr: 1 },
-    { k: "costume", label: "服化" },
-    { k: "special", label: "特殊需求", arr: 1, cls: "c-special" },
-    { k: "summary", label: "剧情简述", cls: "c-sum" }
+    { k: "mainLoc", label: "主场景", cls: "c-loc" },
+    { k: "subLoc", label: "分场景", cls: "c-loc" },
+    { k: "pages", label: "页数", num: 1 },
+    { k: "content", label: "内容提示", cls: "c-sum" },
+    { k: "action", label: "动作/特效", cls: "c-special" },
+    { k: "characters", label: "主要演员", arr: 1, cls: "c-chars" },
+    { k: "extras", label: "特约演员" },
+    { k: "crowd", label: "群众演员" },
+    { k: "propsNote", label: "服化道提示", cls: "c-props" }
   ];
 
   function renderScenes(box) {
@@ -494,10 +676,9 @@
       box.innerHTML = runningStrip("scenes")
         + '<div class="prod-panel"><div class="prod-empty"><span class="big">🎬</span>'
         + '<h3>分场表 · 顺场表</h3>'
-        + '<p>制片帽把全剧本逐场拆开：场号、内/外、日/夜、场景、出场人物、群特、关键道具、服化、'
-        + '特殊拍摄需求（雨戏/车戏/特效…）、页数、剧情简述。<br>'
-        + '拆完即得 <b>分场表</b>（按剧本顺序）和 <b>顺场表</b>（按场景归组，转场一目了然）。<br>'
-        + '本剧本约 ' + fmtWan(p.words) + '，预计分 ' + estBatches + ' 批拆解、约 ' + estMinutes(estBatches) + '。</p>'
+        + '<p>制片帽把剧本逐场拆开：集/场/气氛/内外、主场景与分场景、内容提示、动作特效、'
+        + '主要演员、特约与群众、服化道提示、页数——拆完即得 <b>分场表</b>（按剧本顺序）和 <b>顺场表</b>（按场景归组省转场）。<br>'
+        + '本剧本约 ' + fmtWan(p.words) + '，预计分 ' + estBatches + ' 批、约 ' + estMinutes(estBatches) + '。</p>'
         + (S.job ? "" : '<button class="prod-btn" id="prodRunScenes">开始拆分场表 →</button>')
         + '</div></div>';
       bindRun("prodRunScenes", "scenes");
@@ -512,14 +693,14 @@
       + '</div>'
       + (S.dirty.scenes ? '<span class="prod-dirty-flag">● 有未保存的修改</span>' : "")
       + '<button class="prod-btn save-hot" id="prodSaveScenes"' + (S.dirty.scenes ? "" : " disabled") + '>💾 保存</button>'
-      + '<button class="prod-btn minor" id="prodCsvScenes">⬇ 导出 CSV</button>'
+      + '<button class="prod-btn minor" id="prodCsvScenes">⬇ 导出 CSV（演员矩阵）</button>'
       + '<button class="prod-btn minor" id="prodRedoScenes">↻ 重新拆</button>'
-      + '<span class="hint">单元格直接点开改 · 人物/道具用「、」分隔</span></div>';
-    h += statsStripHTML(sc);
-    if (sd.truncatedNote) h += '<div class="prod-note-strip">⚠ ' + esc(sd.truncatedNote) + "</div>";
+      + '<span class="hint">单元格直接点开改 · 演员用「、」分隔</span></div>';
+    h += statsStripHTML(sc, false);
+    if (sd.truncatedNote) h += '<div class="prod-note-strip warn">⚠ ' + esc(sd.truncatedNote) + "</div>";
     if (sd.mode === "blocks") h += '<div class="prod-note-strip">ℹ️ 这个剧本没有标准场头（可能是文学本），场次是制片帽按地点/时间自行划分的，建议过一遍核对。</div>';
-    if (S.subTab === "order") h += orderTableHTML(sc);
-    else h += setTableHTML(sc);
+    if (S.subTab === "order") h += orderTableHTML(sc, false);
+    else h += setTableHTML(sc, false);
     box.innerHTML = h;
 
     [].forEach.call(box.querySelectorAll(".prod-subtab"), function (b) {
@@ -528,7 +709,9 @@
     el("prodSaveScenes").onclick = function () {
       saveField("scenes", S.cur.scenes, function () { S.dirty.scenes = false; toast("✓ 场景表已保存"); renderTabBody(); });
     };
-    el("prodCsvScenes").onclick = function () { exportScenesCSV(); };
+    el("prodCsvScenes").onclick = function () {
+      exportScenesCSV(sc, (S.cur.title || "剧本") + (S.subTab === "set" ? "-顺场表" : "-分场表"), S.subTab === "set");
+    };
     el("prodRedoScenes").onclick = function () {
       if (confirm("重新拆会覆盖当前表（包括你的手改）。继续？")) startJob("scenes");
     };
@@ -539,19 +722,22 @@
     return mins <= 1 ? "1 分钟上下" : ("约 " + mins + " 分钟");
   }
 
-  function statsStripHTML(sc) {
-    var locs = {}, chars = {}, night = 0, ext = 0, pages = 0;
+  function statsStripHTML(sc, isSeries) {
+    var locs = {}, chars = {}, night = 0, ext = 0, pages = 0, eps = {};
     sc.forEach(function (s) {
-      if (s.location) locs[s.location.trim()] = 1;
+      var loc = (s.mainLoc || "").trim();
+      if (loc) locs[loc] = 1;
       (s.characters || []).forEach(function (c) { chars[c] = 1; });
-      if ((s.dayNight || "").indexOf("夜") > -1) night++;
+      if ((s.atmo || "").indexOf("夜") > -1) night++;
       if ((s.intExt || "").indexOf("外") > -1) ext++;
       pages += num(s.pages);
+      if (s.ep != null) eps[s.ep] = 1;
     });
     return '<div class="prod-stats-strip">'
+      + (isSeries ? '<span class="prod-stat">含 <b>' + Object.keys(eps).length + '</b> 集</span>' : "")
       + '<span class="prod-stat">共 <b>' + sc.length + '</b> 场</span>'
-      + '<span class="prod-stat">场景 <b>' + Object.keys(locs).length + '</b> 处</span>'
-      + '<span class="prod-stat">人物 <b>' + Object.keys(chars).length + '</b> 人</span>'
+      + '<span class="prod-stat">主场景 <b>' + Object.keys(locs).length + '</b> 处</span>'
+      + '<span class="prod-stat">演员 <b>' + Object.keys(chars).length + '</b> 人</span>'
       + '<span class="prod-stat">夜戏 <b>' + night + '</b> 场</span>'
       + '<span class="prod-stat">外景 <b>' + ext + '</b> 场</span>'
       + '<span class="prod-stat">约 <b>' + pages.toFixed(1) + '</b> 页（≈分钟）</span>'
@@ -564,22 +750,17 @@
     if (v == null) return "";
     return String(v);
   }
-  function orderTableHTML(sc) {
-    var head = SCENE_COLS.map(function (c) { return "<th>" + c.label + "</th>"; }).join("") + "<th></th>";
+  function orderTableHTML(sc, readonly) {
+    var head = SCENE_COLS.map(function (c) { return "<th>" + c.label + "</th>"; }).join("") + (readonly ? "" : "<th></th>");
     var rows = sc.map(function (s, i) {
       var tds = SCENE_COLS.map(function (c) {
-        var extra = "";
-        if (c.k === "dayNight") {
-          var dn = String(s.dayNight || "");
-          extra = dn.indexOf("夜") > -1 ? ' class="c-dn"' : "";
-        }
-        return '<td class="' + (c.cls || "") + '" contenteditable="true" data-i="' + i + '" data-k="' + c.k + '">'
-          + esc(cellText(s, c)) + "</td>";
+        return '<td class="' + (c.cls || "") + '"' + (readonly ? "" : ' contenteditable="true"')
+          + ' data-i="' + i + '" data-k="' + c.k + '">' + esc(cellText(s, c)) + "</td>";
       }).join("");
-      return '<tr>' + tds + '<td class="c-del"><button data-del="' + i + '" title="删除本场">×</button></td></tr>';
+      return '<tr>' + tds + (readonly ? "" : '<td class="c-del"><button data-del="' + i + '" title="删除本场">×</button></td>') + '</tr>';
     }).join("");
     return '<div class="prod-table-scroll"><table class="prod-scenes"><tr>' + head + "</tr>" + rows + "</table></div>"
-      + '<div style="margin-top:12px"><button class="prod-row-add" id="prodAddScene">+ 添加一场</button></div>';
+      + (readonly ? "" : '<div style="margin-top:12px"><button class="prod-row-add" id="prodAddScene">+ 添加一场</button></div>');
   }
   function bindSceneTable(box) {
     [].forEach.call(box.querySelectorAll("td[contenteditable]"), function (td) {
@@ -591,7 +772,7 @@
         var nv = col.arr ? splitArr(v) : (k === "pages" ? num(v) : (k === "ep" ? (v === "" ? null : num(v)) : v));
         if (JSON.stringify(s[k] == null ? (col.arr ? [] : "") : s[k]) !== JSON.stringify(nv)) {
           s[k] = nv;
-          if (!S.dirty.scenes) { S.dirty.scenes = true; refreshScenesToolbar(); }
+          if (!S.dirty.scenes) { S.dirty.scenes = true; renderTabBody(); }
         }
       };
       td.onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); td.blur(); } };
@@ -600,35 +781,35 @@
       b.onclick = function () {
         var i = +b.getAttribute("data-del");
         var s = S.cur.scenes.scenes[i];
-        if (!confirm("删除第 " + (s.no || i + 1) + " 场（" + (s.location || "") + "）？")) return;
+        if (!confirm("删除第 " + (s.no || i + 1) + " 场（" + (s.mainLoc || "") + "）？")) return;
         S.cur.scenes.scenes.splice(i, 1);
         S.dirty.scenes = true; renderTabBody();
       };
     });
     var ab = el("prodAddScene");
     if (ab) ab.onclick = function () {
-      S.cur.scenes.scenes.push({ no: String(S.cur.scenes.scenes.length + 1), ep: null, intExt: "内", dayNight: "日",
-        location: "", summary: "", characters: [], extras: "", props: [], costume: "", special: [], pages: 0.5 });
+      S.cur.scenes.scenes.push({ no: String(S.cur.scenes.scenes.length + 1), ep: S.cur.episode || null,
+        atmo: "日", intExt: "内", mainLoc: "", subLoc: "", pages: 0.5, content: "", action: "",
+        characters: [], extras: "", crowd: "", propsNote: "" });
       S.dirty.scenes = true; renderTabBody();
       var scroll = box.querySelector(".prod-table-scroll");
       if (scroll) scroll.scrollTop = scroll.scrollHeight;
     };
   }
-  function refreshScenesToolbar() { renderTabBody(); }
 
-  /* 顺场表：分场表按"场景地点"归组的视图——地点相同的戏排一起（剧组转场逻辑），实时从分场表推导 */
-  function setTableHTML(sc) {
+  /* 顺场表：按"主场景"归组（同景集中拍、省转场），实时从分场表推导 */
+  function setTableHTML(sc, isSeries) {
     var groups = [], byLoc = {};
     sc.forEach(function (s, i) {
-      var key = (s.location || "").trim() || "（未填场景）";
-      if (!byLoc[key]) { byLoc[key] = { loc: key, list: [], firstIdx: i }; groups.push(byLoc[key]); }
+      var key = (s.mainLoc || "").trim() || "（未填主场景）";
+      if (!byLoc[key]) { byLoc[key] = { loc: key, list: [] }; groups.push(byLoc[key]); }
       byLoc[key].list.push(s);
     });
-    var h = '<div class="prod-note-strip" style="margin-bottom:14px">ℹ️ 顺场表由分场表自动归组（同场景的戏排到一起，省转场）。要改内容请在「分场表」里改，这里会跟着变。</div>';
+    var h = '<div class="prod-note-strip" style="margin-bottom:14px">ℹ️ 顺场表由分场表按「主场景」自动归组。要改内容请在分场表里改，这里跟着变。</div>';
     groups.forEach(function (g) {
       var day = 0, night = 0, pages = 0, cast = {};
       g.list.forEach(function (s) {
-        if ((s.dayNight || "").indexOf("夜") > -1) night++; else day++;
+        if ((s.atmo || "").indexOf("夜") > -1) night++; else day++;
         pages += num(s.pages);
         (s.characters || []).forEach(function (c) { cast[c] = 1; });
       });
@@ -639,13 +820,15 @@
         + '<span class="n">' + g.list.length + " 场 · 日 " + day + " / 夜 " + night + " · 约 " + pages.toFixed(1) + " 页</span>"
         + '<span class="cast">' + esc(castShow) + "</span></div><table>";
       g.list.forEach(function (s) {
-        var dn = String(s.dayNight || "");
+        var dn = String(s.atmo || "");
         h += "<tr>"
-          + '<td style="white-space:nowrap;font-weight:700;color:var(--accent-deep)">' + esc(s.no || "") + "</td>"
-          + '<td style="white-space:nowrap">' + esc(s.intExt || "") + ' <span class="' + (dn.indexOf("夜") > -1 ? "prod-tag-night" : "prod-tag-day") + '">' + esc(dn || "—") + "</span></td>"
-          + "<td>" + esc(s.summary || "") + "</td>"
+          + '<td style="white-space:nowrap;font-weight:700;color:var(--prod-deep)">'
+          + (s.ep != null ? esc(s.ep) + "-" : "") + esc(s.no || "") + "</td>"
+          + '<td style="white-space:nowrap">' + esc(s.intExt || "") + ' <span class="' + (dn.indexOf("夜") > -1 ? "prod-tag-night" : "prod-tag-day") + '">' + esc(dn || "—") + "</span>"
+          + (s.subLoc ? ' <span style="color:var(--ink-faint);font-size:11px">' + esc(s.subLoc) + "</span>" : "") + "</td>"
+          + "<td>" + esc(s.content || "") + "</td>"
           + '<td style="color:var(--ink-soft)">' + esc((s.characters || []).join("、")) + "</td>"
-          + '<td style="color:#9a6253">' + esc((s.special || []).join("、")) + "</td>"
+          + '<td style="color:#9a6253">' + esc(s.action || "") + "</td>"
           + "</tr>";
       });
       h += "</table></div>";
@@ -653,7 +836,9 @@
     return h;
   }
 
-  /* CSV 导出（Excel 直接能开：BOM + CRLF） */
+  /* ===== CSV 导出：行业惯例的"演员矩阵"格式（同《开盘》场景表）=====
+     列 = 集|场|气氛|内外|页数|主场景|分场景|内容提示|动作/特效|<每个演员一列>|特约演员|群众演员|服化道提示
+     演员列按全表出场次数排序，出场的格子打 ●，一眼能看出谁哪几场有戏（排档期用）。 */
   function csvCell(v) {
     v = String(v == null ? "" : v);
     if (/[",\n]/.test(v)) v = '"' + v.replace(/"/g, '""') + '"';
@@ -667,29 +852,37 @@
     document.body.appendChild(a); a.click();
     setTimeout(function () { document.body.removeChild(a); URL.revokeObjectURL(a.href); }, 300);
   }
-  function exportScenesCSV() {
-    var sc = S.cur.scenes.scenes;
-    var lines = [SCENE_COLS.map(function (c) { return csvCell(c.label); }).join(",")];
-    sc.forEach(function (s) {
-      lines.push(SCENE_COLS.map(function (c) { return csvCell(cellText(s, c)); }).join(","));
-    });
-    if (S.subTab === "set") {
-      // 顺场表导出：按场景分组重排
-      lines = [["场景", "场号", "内/外", "日/夜", "剧情简述", "出场人物", "特殊需求", "页数"].map(csvCell).join(",")];
+  function exportScenesCSV(sc, filename, bySet) {
+    // 演员列：出场次数降序，最多 40 列（再多 Excel 也看不过来），其余并入"其他出场"
+    var castCount = {};
+    sc.forEach(function (s) { (s.characters || []).forEach(function (c) { castCount[c] = (castCount[c] || 0) + 1; }); });
+    var cast = Object.keys(castCount).sort(function (a, b) { return castCount[b] - castCount[a]; });
+    var mainCast = cast.slice(0, 40), restCast = cast.slice(40);
+    var head = ["集", "场", "气氛", "内/外", "页数", "主场景", "分场景", "内容提示", "动作/特效"]
+      .concat(mainCast).concat(restCast.length ? ["其他出场"] : []).concat(["特约演员", "群众演员", "服化道提示"]);
+    var rows = bySet ? [] : sc.slice();
+    if (bySet) {  // 顺场：按主场景归组重排
       var byLoc = {}, order = [];
       sc.forEach(function (s) {
-        var key = (s.location || "").trim() || "（未填场景）";
+        var key = (s.mainLoc || "").trim() || "（未填主场景）";
         if (!byLoc[key]) { byLoc[key] = []; order.push(key); }
         byLoc[key].push(s);
       });
-      order.forEach(function (loc) {
-        byLoc[loc].forEach(function (s) {
-          lines.push([loc, s.no, s.intExt, s.dayNight, s.summary, (s.characters || []).join("、"), (s.special || []).join("、"), s.pages].map(csvCell).join(","));
-        });
-      });
+      order.forEach(function (loc) { rows = rows.concat(byLoc[loc]); });
     }
-    downloadCSV((S.cur.title || "剧本") + (S.subTab === "set" ? "-顺场表" : "-分场表") + ".csv", lines);
-    toast("✓ 已导出 CSV（Excel 可直接打开）");
+    var lines = [head.map(csvCell).join(",")];
+    rows.forEach(function (s) {
+      var inCast = {};
+      (s.characters || []).forEach(function (c) { inCast[c] = 1; });
+      var line = [s.ep != null ? s.ep : "", s.no || "", s.atmo || "", s.intExt || "", s.pages != null ? s.pages : "",
+                  s.mainLoc || "", s.subLoc || "", s.content || "", s.action || ""]
+        .concat(mainCast.map(function (c) { return inCast[c] ? "●" : ""; }))
+        .concat(restCast.length ? [restCast.filter(function (c) { return inCast[c]; }).join("、")] : [])
+        .concat([s.extras || "", s.crowd || "", s.propsNote || ""]);
+      lines.push(line.map(csvCell).join(","));
+    });
+    downloadCSV(filename + ".csv", lines);
+    toast("✓ 已导出 CSV（Excel 直接打开，演员矩阵格式）");
   }
 
   /* ===================================================== ③ 参考预算 */
@@ -728,7 +921,6 @@
       + '<button class="prod-btn minor" id="prodCsvBudget">⬇ 导出 CSV</button>'
       + '<span class="hint">生成于 ' + fmtDate(b.generatedAt) + " · 金额单位：万元 · 区间为 低–高 估</span></div>";
     h += '<div id="prodBudgetTotal"></div>';
-    // 按 group 分组渲染
     var groups = [], byG = {};
     (b.items = b.items || []).forEach(function (it, i) {
       var g = it.group || "其他";
@@ -761,7 +953,7 @@
       inp.oninput = function () {
         var i = +inp.getAttribute("data-bi"), k = inp.getAttribute("data-bk");
         b.items[i][k] = (k === "low" || k === "high") ? num(inp.value) : inp.value;
-        if (!S.dirty.budget) { S.dirty.budget = true; softRefreshBudgetToolbar(); }
+        if (!S.dirty.budget) { S.dirty.budget = true; renderTabBody(); }
         recalcBudget();
       };
     });
@@ -797,9 +989,8 @@
       });
     };
   }
-  function softRefreshBudgetToolbar() { renderTabBody(); }
   function recalcBudget() {
-    var b = S.cur.budget;
+    var b = S.cur && S.cur.budget;
     if (!b || !el("prodBudgetTotal")) return;
     var lo = 0, hi = 0, byG = {};
     (b.items || []).forEach(function (it) {
@@ -813,7 +1004,7 @@
     el("prodBudgetTotal").innerHTML = '<div class="prod-budget-total">'
       + '<span class="label">制作成本小计</span><span class="amount">' + fmtMoney(lo) + " – " + fmtMoney(hi) + "</span>"
       + '<span class="sub">+ 不可预见费 ' + pct + "%</span>"
-      + '<span class="label" style="margin-left:8px">总参考</span><span class="amount" style="color:var(--story)">' + fmtMoney(tlo) + " – " + fmtMoney(thi) + "</span>"
+      + '<span class="label" style="margin-left:8px">总参考</span><span class="amount total">' + fmtMoney(tlo) + " – " + fmtMoney(thi) + "</span>"
       + (b.shootDays ? '<span class="sub">预估拍摄周期 ' + b.shootDays + " 天</span>" : "")
       + "</div>";
     [].forEach.call(document.querySelectorAll("[data-gsum]"), function (n) {
@@ -847,25 +1038,27 @@
     var b = el(btnId);
     if (b) b.onclick = function () { startJob(kind); };
   }
-  function startJob(kind, options) {
+  function startJob(kind, options, idOverride) {
     if (S.job) return toast("已有任务在跑，等它完成再来", true);
-    api("/api/production/run", { method: "POST", body: { id: S.cur.id, kind: kind, options: options || {} } })
+    var targetId = idOverride || (S.cur && S.cur.id);
+    if (!targetId) return;
+    api("/api/production/run", { method: "POST", body: { id: targetId, kind: kind, options: options || {} } })
       .then(function (j) {
         if (!j.ok) return toast(j.error || "任务启动失败", true);
-        S.job = { id: j.jobId, kind: kind, t0: Date.now() };
+        S.job = { id: j.jobId, kind: kind, targetId: targetId, t0: Date.now() };
         showLoading(kind);
         pollJob();
-        renderTabBody();   // 把"开始"按钮藏掉、显示后台条
+        renderView();   // 把"开始"按钮藏掉、显示后台条
       }).catch(function () { toast("没连上后端", true); });
   }
 
   var LOAD_META = {
     analysis: { title: "制片帽正在解剖剧本", tip: "思考型模型通读全本，约 1–3 分钟。可收起浮层先干别的。",
       stages: [[0, "📖 通读剧本…"], [30, "🔬 拆结构、捋人物…"], [60, "⚖️ 评估亮点与风险…"], [85, "✍️ 撰写解剖报告…"]] },
-    scenes: { title: "制片帽正在拆分场表", tip: "逐批拆场提取人物/道具/特殊需求，批数多时会久一点。",
-      stages: null },  // scenes 有真实进度
+    scenes: { title: "制片帽正在拆分场表", tip: "逐批拆场提取演员/服化道/特殊需求，批数多时会久一点。", stages: null },
     budget: { title: "制片帽正在编制预算", tip: "对照中国市场行情逐科目估算，约 1–3 分钟。",
-      stages: [[0, "📊 汇总拆解数据…"], [30, "💰 对照市场行情…"], [60, "🧮 逐科目估区间…"], [85, "✍️ 写假设与说明…"]] }
+      stages: [[0, "📊 汇总拆解数据…"], [30, "💰 对照市场行情…"], [60, "🧮 逐科目估区间…"], [85, "✍️ 写假设与说明…"]] },
+    series_scenes: { title: "制片帽正在逐集拆全剧", tip: "一集一集按顺序拆，集数多请耐心；可收起浮层，后台继续跑。", stages: null }
   };
   function showLoading(kind) {
     var m = LOAD_META[kind];
@@ -880,17 +1073,15 @@
   function tickProgress(realPct, realMsg) {
     if (!S.job) return;
     var m = LOAD_META[S.job.kind], pct, label;
-    if (S.job.kind === "scenes") {
-      pct = Math.max(2, num(realPct));
-      label = realMsg || "拆解中…";
-      S.job.lastPct = pct; S.job.lastMsg = label;
-      if (realPct == null && S.job.lastPct != null) { pct = S.job.lastPct; label = S.job.lastMsg; }
+    if (!m.stages) {   // scenes / series_scenes：真实进度
+      if (realPct != null) { S.job.lastPct = Math.max(2, num(realPct)); S.job.lastMsg = realMsg; }
+      pct = S.job.lastPct || 2;
+      label = S.job.lastMsg || "拆解中…";
     } else {
       var t = (Date.now() - S.job.t0) / 1000;
       pct = Math.min(95, Math.round((1 - Math.exp(-t / 50)) * 100));
       label = m.stages[0][1];
       for (var i = 0; i < m.stages.length; i++) if (pct >= m.stages[i][0]) label = m.stages[i][1];
-      if (realMsg) label = realMsg;
     }
     el("prodProgFill").style.width = pct + "%";
     el("prodProgLabel").textContent = label + "  " + pct + "%";
@@ -903,27 +1094,31 @@
         if (!j.ok || !j.job) return;
         var job = j.job;
         if (job.status === "running") {
-          if (S.job.kind === "scenes") tickProgress(job.progress, job.message);
-          else if (job.message) tickProgress(null, null);
+          tickProgress(job.progress, job.message);
           return;
         }
-        // 终态
         clearInterval(S.pollTimer); S.pollTimer = null;
         if (S.progTimer) { clearInterval(S.progTimer); S.progTimer = null; }
-        var kind = S.job.kind;
+        var kind = S.job.kind, targetId = S.job.targetId;
         S.job = null;
         if (job.status === "done") {
           el("prodProgFill").style.width = "100%";
           el("prodProgLabel").textContent = "✓ 完成，正在呈现…";
-          // 重新拉项目，把新结果接进来
-          api("/api/production/project?id=" + S.cur.id).then(function (r) {
+          if (kind === "series_scenes") {
+            el("prodLoading").hidden = true;
+            toast("✓ 全剧分场表拆完");
+            loadSeries(targetId, true);
+            return;
+          }
+          api("/api/production/project?id=" + targetId).then(function (r) {
             el("prodLoading").hidden = true;
             if (r.ok) {
               S.cur = r.project;
+              normalizeProjScenes(S.cur);
               S.tab = kind === "scenes" ? "scenes" : (kind === "budget" ? "budget" : "analysis");
-              S.dirty[kind === "analysis" ? "scenes" : kind] = S.dirty[kind] || false;
               if (kind === "scenes") S.dirty.scenes = false;
               if (kind === "budget") S.dirty.budget = false;
+              S.view = "project";
               renderProject();
               toast("✓ " + jobName(kind) + "完成");
             }
@@ -931,7 +1126,7 @@
         } else {
           el("prodLoading").hidden = true;
           toast("✗ " + jobName(kind) + "失败：" + (job.error || "未知错误"), true);
-          renderTabBody();
+          renderView();
         }
       }).catch(function () { /* 网络抖动：下个周期再试 */ });
     }, 2500);
@@ -960,7 +1155,6 @@
     });
     return found;
   }
-  // app.js 在前面已同步执行完（script 都在 body 底部），DOM 此刻是齐的；保险起见失败就再试一次
   if (!hijackEntry()) {
     var retry = 0, t = setInterval(function () {
       if (hijackEntry() || ++retry > 20) clearInterval(t);
